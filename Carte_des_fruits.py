@@ -20,6 +20,11 @@ except Exception:
 
 st.set_page_config(page_title="Arbres & champignons – Lausanne", layout="wide")
 st.title("Carte des arbres fruitiers & champignons à Lausanne")
+# --- DIAGNOSTIC TEMPORAIRE DES SECRETS ---
+st.write("secrets keys ->", list(st.secrets.keys()))
+st.write("has gsheets_spreadsheet_url ->", "gsheets_spreadsheet_url" in st.secrets)
+st.write("worksheet name ->", st.secrets.get("gsheets_worksheet_name", "<absent>"))
+
 
 # ============================================================
 # 0) Mode persistant OBLIGATOIRE (Google Sheets) + garde-fou
