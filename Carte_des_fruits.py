@@ -21,6 +21,41 @@ except Exception:
 st.set_page_config(page_title="Arbres & champignons – Lausanne", layout="wide")
 st.title("Carte des arbres fruitiers & champignons à Lausanne")
 
+# ====== Mode mobile / compact (UI responsive légère) ======
+MOBILE_COMPACT = st.sidebar.toggle("📱 Mode compact (mobile)", value=True)
+
+# CSS responsive pour petits écrans
+st.markdown("""
+<style>
+/* Réduit les marges globales sur mobile */
+@media (max-width: 640px){
+  .block-container { padding: 0.6rem 0.7rem !important; }
+  .stSidebar { width: 78vw !important; } /* tiroir un peu plus large */
+}
+/* Légende plus petite et moins intrusive sur mobile */
+@media (max-width: 640px){
+  #legend-card { left: 12px !important; bottom: 12px !important; }
+  #legend-card details { font-size: 12px !important; max-width: 180px !important; }
+}
+/* Affine les boutons/inputs sur mobile pour le touch */
+@media (max-width: 640px){
+  button, .stButton>button { padding: .5rem .8rem !important; font-size: 0.95rem !important; }
+  .stSelectbox, .stTextInput, .stNumberInput { font-size: .95rem !important; }
+}
+/* Évite que la carte déborde horizontalement */
+[data-testid="stHorizontalBlock"] { overflow: visible !important; }
+</style>
+""", unsafe_allow_html=True)
+
+# Hauteur de carte adaptée (plus grande en mode mobile compact)
+MAP_HEIGHT = 520
+if MOBILE_COMPACT:
+    MAP_HEIGHT = 620  # plus de hauteur utile sur petit écran
+
+# Petite astuce UX : info pour replier la barre latérale sur mobile
+if MOBILE_COMPACT:
+    st.caption("📱 Astuce mobile : replie la barre latérale via l’icône ☰ pour profiter de toute la largeur de la carte.")
+
 # ============================================================
 # 0) Mode persistant OBLIGATOIRE (Google Sheets) + garde-fou tolérant
 # ============================================================
@@ -551,7 +586,8 @@ legend_html = f"""
 m.get_root().html.add_child(folium.Element(legend_html))
 
 # Affichage carte
-st_folium(m, width=900, height=520)
+st_folium(m, width=None, height=MAP_HEIGHT)
+
 
 # ============================================================
 # 7) Stats & export
