@@ -247,16 +247,20 @@ if st.sidebar.button("🔄 Rafraîchir les données"):
     st.session_state["trees"] = load_items()
     st.rerun()
 
+
 # Bouton pour réparer l'entête si besoin
 if st.sidebar.button("🛠️ Réparer l’entête (A1:G1)"):
     try:
         ws = _gsheets_open()
         ws.update("A1:G1", [["id","name","lat","lon","seasons","is_deleted","updated_at"]])
         _invalidate_cache()
-        st.success("Entête réparée ✅")
+        # 🔁 Recharge immédiatement la source de vérité dans la session
+        st.session_state["trees"] = load_items()
+        st.success("Entête réparée ✅ (données rechargées)")
         st.rerun()
     except Exception as e:
         st.error(f"Impossible de réparer l'entête : {e}")
+
 
 st.sidebar.subheader("➕/➖ Ajouter ou supprimer un point")
 mode = st.sidebar.radio("Choisir mode", ["Ajouter", "Supprimer"], index=0, horizontal=True, label_visibility="collapsed")
