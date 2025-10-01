@@ -256,88 +256,10 @@ colors = {
 MUSHROOM_SET = {"Bolets", "Chanterelles", "Morilles"}
 
 # ============================================================
+# 4) Barre latérale — ordre : Filtres → Recherche → Ajout/Suppression → Refresh
 # ============================================================
-# 4) Actions & outils (placés AVANT filtrage + carte)
-# ============================================================
-st.sidebar.markdown("---")
-if st.sidebar.button("🔄 Rafraîchir les données"):
-    _invalidate_cache()
-    st.session_state["trees"] = load_items()
-    st.rerun()
 
-st.sidebar.subheader("➕/➖ Ajouter ou supprimer un point")
-mode = st.sidebar.radio("Choisir mode", ["Ajouter", "Supprimer"], index=0, horizontal=True, label_visibility="collapsed")
-
-# ---------- Mode AJOUTER (formulaire dédié) ----------
-if mode == "Ajouter":
-    with st.sidebar.form("add_form"):
-        new_name = st.selectbox(
-            "Catégorie",
-            options=sorted(set(CATALOG + [t["name"] for t in st.session_state["trees"]])),
-            index=0
-        )
-        col_a, col_b = st.columns(2)
-        with col_a:
-            new_lat = st.number_input("Latitude", value=46.519100, format="%.6f")
-        with col_b:
-            new_lon = st.number_input("Longitude", value=6.633600, format="%.6f")
-        all_seasons = ["printemps", "été", "automne", "hiver"]
-        new_seasons = st.multiselect("Saison(s)", options=all_seasons, default=["automne"])
-
-        submitted_add = st.form_submit_button("Ajouter & enregistrer")
-        if submitted_add:
-            try:
-                add_item(new_name, float(new_lat), float(new_lon), new_seasons or [])
-                if new_name not in colors:
-                    colors[new_name] = "green"
-                st.session_state["trees"] = load_items()
-                st.success(f"Ajouté : {new_name} ✅ (persisté)")
-                st.rerun()  # 🔁 reconstruit la carte
-            except Exception as e:
-                st.error(f"Erreur lors de l'ajout : {e}")
-
-# ---------- Mode SUPPRIMER (case à cocher hors form + form dédié) ----------
-else:
-    trees = st.session_state.get("trees", [])
-    if not trees:
-        st.info("Aucun point à supprimer.")
-    else:
-        # Liste des points
-        options_labels, idx_to_id = [], {}
-        for i, t in enumerate(trees):
-            seasons_txt = _serialize_seasons(t.get("seasons", [])) or "—"
-            options_labels.append(f"{i+1}. {t['name']} – {t['lat']:.5f}, {t['lon']:.5f} [{seasons_txt}]")
-            idx_to_id[i] = t["id"]
-
-        # ✅ La checkbox est HORS du form pour déclencher un rerun à chaque clic
-        confirm = st.sidebar.checkbox("Je confirme la suppression", value=False, key="confirm_delete")
-
-        with st.sidebar.form("delete_form"):
-            idx_choice = st.selectbox(
-                "Choisis le point à supprimer",
-                options=list(idx_to_id.keys()),
-                format_func=lambda i: options_labels[i]
-            )
-            submitted_del = st.form_submit_button("Supprimer définitivement", disabled=not st.session_state["confirm_delete"])
-
-        if submitted_del:
-            if not confirm:
-                st.warning("Coche d'abord la case « Je confirme la suppression ».")
-            else:
-                try:
-                    ok = soft_delete_item(idx_to_id[idx_choice])
-                    if ok:
-                        st.session_state["trees"] = load_items()
-                        st.success("Point supprimé (soft delete) ✅")
-                        st.rerun()
-                except Exception as e:
-                    st.error(f"Erreur lors de la suppression : {e}")
-
-
-
-# ============================================================
-# 5) Filtres + recherche
-# ============================================================
+# ---------- (1) FILTRES EN PREMIER ----------
 st.sidebar.header("Filtres")
 
 basemap_label_to_tiles = {
@@ -354,9 +276,10 @@ all_seasons = ["printemps", "été", "automne", "hiver"]
 selected_types = st.sidebar.multiselect("Catégorie(s) à afficher", options=all_types, default=[])
 selected_seasons = st.sidebar.multiselect("Saison(s) de récolte", options=all_seasons, default=[])
 
-# --- Recherche d'adresse / rue ---
+# ---------- (2) RECHERCHE D'ADRESSE / RUE ----------
 st.sidebar.markdown("---")
 st.sidebar.subheader("🔎 Rechercher une adresse / rue")
+
 BBOX_SW = (46.47, 6.48)
 BBOX_NE = (46.60, 6.80)
 
@@ -403,16 +326,95 @@ if c1.button("Chercher"):
             st.session_state["search_label"] = ""
             st.sidebar.error("Adresse introuvable. Essaie avec un numéro ou une autre commune.")
 
-if c2.button("Réinitialiser recherche"):
+if c2.button("Réinitialiser"):
     st.session_state["search_center"] = None
     st.session_state["search_label"] = ""
 
-# Filtrage
+# ---------- (3) AJOUTER / SUPPRIMER UN POINT (en bas) ----------
+st.sidebar.markdown("---")
+st.sidebar.subheader("➕/➖ Ajouter ou supprimer un point")
+
+mode = st.sidebar.radio("Choisir mode", ["Ajouter", "Supprimer"], index=0, horizontal=True, label_visibility="collapsed")
+
+# --- Mode AJOUTER ---
+if mode == "Ajouter":
+    with st.sidebar.form("add_form"):
+        new_name = st.selectbox(
+            "Catégorie",
+            options=sorted(set(CATALOG + [t["name"] for t in st.session_state["trees"]])),
+            index=0
+        )
+        col_a, col_b = st.columns(2)
+        with col_a:
+            new_lat = st.number_input("Latitude", value=46.519100, format="%.6f")
+        with col_b:
+            new_lon = st.number_input("Longitude", value=6.633600, format="%.6f")
+        all_seasons = ["printemps", "été", "automne", "hiver"]
+        new_seasons = st.multiselect("Saison(s)", options=all_seasons, default=["automne"])
+
+        submitted_add = st.form_submit_button("Ajouter & enregistrer")
+        if submitted_add:
+            try:
+                add_item(new_name, float(new_lat), float(new_lon), new_seasons or [])
+                if new_name not in colors:
+                    colors[new_name] = "green"
+                st.session_state["trees"] = load_items()
+                st.success(f"Ajouté : {new_name} ✅ (persisté)")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Erreur lors de l'ajout : {e}")
+
+# --- Mode SUPPRIMER ---
+else:
+    trees = st.session_state.get("trees", [])
+    if not trees:
+        st.info("Aucun point à supprimer.")
+    else:
+        options_labels, idx_to_id = [], {}
+        for i, t in enumerate(trees):
+            seasons_txt = _serialize_seasons(t.get("seasons", [])) or "—"
+            options_labels.append(f"{i+1}. {t['name']} – {t['lat']:.5f}, {t['lon']:.5f} [{seasons_txt}]")
+            idx_to_id[i] = t["id"]
+
+        confirm = st.sidebar.checkbox("Je confirme la suppression", value=False, key="confirm_delete")
+
+        with st.sidebar.form("delete_form"):
+            idx_choice = st.selectbox(
+                "Choisis le point à supprimer",
+                options=list(idx_to_id.keys()),
+                format_func=lambda i: options_labels[i]
+            )
+            submitted_del = st.form_submit_button("Supprimer définitivement", disabled=not st.session_state["confirm_delete"])
+
+        if submitted_del:
+            if not confirm:
+                st.warning("Coche d'abord la case « Je confirme la suppression ».")
+            else:
+                try:
+                    ok = soft_delete_item(idx_to_id[idx_choice])
+                    if ok:
+                        st.session_state["trees"] = load_items()
+                        st.success("Point supprimé (soft delete) ✅")
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"Erreur lors de la suppression : {e}")
+
+# ---------- (4) BOUTON RAFRAÎCHIR TOUT EN BAS ----------
+st.sidebar.markdown("---")
+if st.sidebar.button("🔄 Rafraîchir les données"):
+    _invalidate_cache()
+    st.session_state["trees"] = load_items()
+    st.rerun()
+
+# ============================================================
+# 5) Filtrage des données (après saisie des filtres)
+# ============================================================
 filtered = items
 if selected_types:
     filtered = [t for t in filtered if t["name"] in selected_types]
 if selected_seasons:
     filtered = [t for t in filtered if any(s in selected_seasons for s in t["seasons"])]
+
 
 # ============================================================
 # 6) Carte
