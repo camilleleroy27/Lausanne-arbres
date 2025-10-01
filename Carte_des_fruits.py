@@ -22,7 +22,7 @@ st.set_page_config(page_title="Arbres & champignons – Lausanne", layout="wide"
 st.title("Carte des arbres fruitiers & champignons à Lausanne")
 
 # ============================================================
-# 0) Mode persistant OBLIGATOIRE (Google Sheets) + garde-fou tolérant
+# 0) Garde-fou secrets (Google Sheets requis)
 # ============================================================
 has_gcp = "gcp_service_account" in st.secrets
 url_root = st.secrets.get("gsheets_spreadsheet_url")
@@ -48,8 +48,9 @@ if missing:
     st.stop()
 
 # ============================================================
-# 1) Persistance (Google Sheets uniquement)
+# 1) Persistance Google Sheets (auto-fix entête + locale FR)
 # ============================================================
+EXPECTED_HEADER = ["id","name","lat","lon","seasons","is_deleted","updated_at"]
 
 def _serialize_seasons(lst):
     return "|".join(lst or [])
@@ -60,7 +61,7 @@ def _parse_seasons(s):
     return [x.strip() for x in str(s).split("|")]
 
 def _to_float(x):
-    """Convertit '46,5191' ou '46.5191' (avec espaces fines) en float."""
+    """Accepte '46,5191' ou '46.5191' (et espaces fines)."""
     s = str(x).strip().replace("\u202f", "").replace(" ", "")
     s = s.replace(",", ".")
     return float(s)
@@ -80,7 +81,6 @@ def _gsheets_open():
     creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
     gc = gspread.authorize(creds)
 
-    # ✅ URL/onglet à la racine OU dans gcp_service_account
     url = st.secrets.get("gsheets_spreadsheet_url") or st.secrets["gcp_service_account"].get("gsheets_spreadsheet_url")
     ws_name = st.secrets.get("gsheets_worksheet_name") or st.secrets["gcp_service_account"].get("gsheets_worksheet_name", "points")
 
@@ -89,52 +89,40 @@ def _gsheets_open():
         ws = sh.worksheet(ws_name)
     except Exception:
         ws = sh.add_worksheet(title=ws_name, rows=1000, cols=10)
-        ws.update("A1:G1", [["id", "name", "lat", "lon", "seasons", "is_deleted", "updated_at"]])
+        ws.update("A1:G1", [EXPECTED_HEADER])
     return ws
+
+def _ensure_header(ws) -> None:
+    """Répare silencieusement l'entête si absente/cassée."""
+    values = ws.get_all_values()
+    if not values:
+        ws.update("A1:G1", [EXPECTED_HEADER])
+        return
+    headers = values[0]
+    # si l'entête ne contient pas l'essentiel -> on réécrit l'entête correcte
+    if not set(["id", "name", "lat", "lon"]).issubset(set(headers)):
+        ws.update("A1:G1", [EXPECTED_HEADER])
 
 @st.cache_data(ttl=10)
 def _read_df():
-    """Lit toutes les lignes depuis Google Sheets (robuste aux entêtes manquantes)."""
+    """Lit toutes les lignes depuis Google Sheets (auto-fix entête)."""
     ws = _gsheets_open()
+    _ensure_header(ws)
 
-    EXPECTED = ["id","name","lat","lon","seasons","is_deleted","updated_at"]
-
-    # Lire brut pour détecter un header cassé
-    values = ws.get_all_values()  # list[list]
-    if not values:
-        return pd.DataFrame(columns=EXPECTED)
-
-    headers = values[0]
-    data_rows = values[1:] if len(values) > 1 else []
-
-    # Cas entête OK
-    if set(["id", "name", "lat", "lon"]).issubset(set(headers)):
-        rows = ws.get_all_records()  # utilise la première ligne comme entête
-        df = pd.DataFrame(rows)
+    # À ce stade l'entête est garantie OK
+    rows = ws.get_all_records()
+    if not rows:
+        df = pd.DataFrame(columns=EXPECTED_HEADER)
     else:
-        # Entête cassée -> forcer entête attendue en mémoire
-        if data_rows:
-            # si la feuille a moins de 7 colonnes, on tronque la liste EXPECTED
-            nb_cols = max(len(r) for r in data_rows)
-            forced_cols = EXPECTED[:nb_cols]
-            df = pd.DataFrame(data_rows, columns=forced_cols)
-            # s'assurer que toutes les colonnes attendues existent
-            for col in EXPECTED:
-                if col not in df.columns:
-                    df[col] = ""
-            df = df[EXPECTED]
-        else:
-            df = pd.DataFrame(columns=EXPECTED)
+        df = pd.DataFrame(rows)
 
-    # Colonnes manquantes -> par défaut
-    for col in EXPECTED:
+    # Colonnes manquantes -> par défaut (par prudence)
+    for col in EXPECTED_HEADER:
         if col not in df.columns:
             df[col] = "" if col != "is_deleted" else "0"
 
-    # Normaliser is_deleted/seasons
-    df["is_deleted"] = df["is_deleted"].replace("", "0")
-    if "seasons" not in df.columns:
-        df["seasons"] = ""
+    # Normaliser
+    df["is_deleted"] = df["is_deleted"].astype(str).replace("", "0")
 
     return df
 
@@ -142,7 +130,7 @@ def _invalidate_cache():
     st.cache_data.clear()
 
 def load_items():
-    """Retourne les items (non supprimés) comme liste de dicts."""
+    """Retourne les items (non supprimés) comme liste de dicts (lat/lon robustes)."""
     df = _read_df()
     df = df[df["is_deleted"] != "1"].copy()
     items = []
@@ -151,8 +139,7 @@ def load_items():
             lat = _to_float(row["lat"])
             lon = _to_float(row["lon"])
         except Exception:
-            # ignore lignes invalides
-            continue
+            continue  # ignore lignes invalides
         items.append({
             "id": str(row.get("id", "")),
             "name": row.get("name", ""),
@@ -163,25 +150,26 @@ def load_items():
     return items
 
 def add_item(name: str, lat: float, lon: float, seasons: list):
-    """Append d'un nouvel item (UUID) dans la feuille."""
+    """Append d'un nouvel item (UUID) dans la feuille (RAW pour éviter la locale)."""
     ws = _gsheets_open()
+    _ensure_header(ws)
     row = [
         str(uuid.uuid4()),
         name,
         float(lat),
         float(lon),
         _serialize_seasons(seasons or []),
-        "0",           # is_deleted
-        _now_iso(),    # updated_at
+        "0",
+        _now_iso(),
     ]
-    # ✅ RAW pour éviter que Sheets re-formate via la locale
     ws.append_row(row, value_input_option="RAW")
     _invalidate_cache()
 
 def soft_delete_item(item_id: str):
     """Marque is_deleted=1 pour l'élément correspondant à item_id."""
     ws = _gsheets_open()
-    values = ws.get_all_values()  # incluant l'entête
+    _ensure_header(ws)
+    values = ws.get_all_values()
     if not values:
         return
     headers = values[0]
@@ -190,22 +178,18 @@ def soft_delete_item(item_id: str):
         isdel_col = headers.index("is_deleted")
         upd_col = headers.index("updated_at")
     except ValueError:
-        st.error("Colonnes attendues absentes dans la feuille (id / is_deleted / updated_at).")
         return
-    for r_idx in range(1, len(values)):  # sauter l'entête
+    for r_idx in range(1, len(values)):  # 1 = sauter l'entête
         if values[r_idx][id_col] == item_id:
-            ws.update_cell(r_idx+1, isdel_col+1, "1")   # gspread est 1-indexed
+            ws.update_cell(r_idx+1, isdel_col+1, "1")
             ws.update_cell(r_idx+1, upd_col+1, _now_iso())
             _invalidate_cache()
             return
-    st.warning("ID non trouvé ; rien supprimé.")
 
 # ============================================================
-# 2) État (session)
+# 2) État (session) — toujours resynchroniser à chaque run
 # ============================================================
-if "trees" not in st.session_state:
-    st.session_state["trees"] = load_items()
-
+st.session_state["trees"] = load_items()
 if "search_center" not in st.session_state:
     st.session_state["search_center"] = None
 if "search_label" not in st.session_state:
@@ -231,7 +215,6 @@ colors = {
     "Poire": "lightgreen",
     "Kaki": "orange",
     "Sureau": "black",
-    # champignons
     "Bolets": "#8B4513",
     "Chanterelles": "orange",
     "Morilles": "black",
@@ -239,28 +222,13 @@ colors = {
 MUSHROOM_SET = {"Bolets", "Chanterelles", "Morilles"}
 
 # ============================================================
-# 4) Actions & outils (placés AVANT filtrage + carte)
+# 4) Actions (sans bouton “réparer”)
 # ============================================================
 st.sidebar.markdown("---")
 if st.sidebar.button("🔄 Rafraîchir les données"):
     _invalidate_cache()
     st.session_state["trees"] = load_items()
     st.rerun()
-
-
-# Bouton pour réparer l'entête si besoin
-if st.sidebar.button("🛠️ Réparer l’entête (A1:G1)"):
-    try:
-        ws = _gsheets_open()
-        ws.update("A1:G1", [["id","name","lat","lon","seasons","is_deleted","updated_at"]])
-        _invalidate_cache()
-        # 🔁 Recharge immédiatement la source de vérité dans la session
-        st.session_state["trees"] = load_items()
-        st.success("Entête réparée ✅ (données rechargées)")
-        st.rerun()
-    except Exception as e:
-        st.error(f"Impossible de réparer l'entête : {e}")
-
 
 st.sidebar.subheader("➕/➖ Ajouter ou supprimer un point")
 mode = st.sidebar.radio("Choisir mode", ["Ajouter", "Supprimer"], index=0, horizontal=True, label_visibility="collapsed")
@@ -284,11 +252,11 @@ with st.sidebar.form("add_or_delete_form"):
                     colors[new_name] = "green"
                 st.session_state["trees"] = load_items()
                 st.success(f"Ajouté : {new_name} ✅ (persisté)")
-                st.rerun()  # 🔁 reconstruit la carte à jour
+                st.rerun()
             except Exception as e:
                 st.error(f"Erreur lors de l'ajout : {e}")
 
-    else:  # Supprimer
+    else:
         trees = st.session_state.get("trees", [])
         if not trees:
             st.info("Aucun point à supprimer.")
@@ -317,7 +285,6 @@ with st.sidebar.form("add_or_delete_form"):
 # 5) Filtres + recherche
 # ============================================================
 st.sidebar.header("Filtres")
-
 basemap_label_to_tiles = {
     "CartoDB positron (clair)": "CartoDB positron",
     "OpenStreetMap": "OpenStreetMap",
@@ -541,7 +508,8 @@ st.markdown("---")
 _df_full = _read_df()
 cols_wanted = ["name","lat","lon","seasons"]
 cols_present = [c for c in cols_wanted if c in _df_full.columns]
-_df_export = _df_full[_df_full.get("is_deleted", "0") != "1"][cols_present].copy()
+mask = (_df_full["is_deleted"].astype(str) != "1") if "is_deleted" in _df_full.columns else True
+_df_export = _df_full[mask][cols_present].copy()
 st.download_button(
     "⬇️ Télécharger tous les points (CSV)",
     data=_df_export.to_csv(index=False),
