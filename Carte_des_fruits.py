@@ -588,30 +588,31 @@ m.get_root().html.add_child(folium.Element(legend_html))
 # Affichage carte
 st_folium(m, width=None, height=MAP_HEIGHT)
 
-
 # ============================================================
 # 7) Stats & export
 # ============================================================
-counts = Counter(t["name"] for t in filtered)
-total = len(filtered)
-st.markdown("**📊 Statistiques (points affichés)**")
-if total == 0:
-    st.write("Aucun point (vérifie les filtres).")
-else:
-    st.write(f"Total : **{total}**")
-    st.markdown("\n".join(f"- {k} : **{counts[k]}**" for k in sorted(counts)))
+with st.expander("📊 Statistiques & export", expanded=not MOBILE_COMPACT):
+    counts = Counter(t["name"] for t in filtered)
+    total = len(filtered)
+    if total == 0:
+        st.write("Aucun point (vérifie les filtres).")
+    else:
+        st.write(f"Total : **{total}**")
+        st.markdown("\n".join(f"- {k} : **{counts[k]}**" for k in sorted(counts)))
 
-st.markdown("---")
-_df_full = _read_df()
-# Normalise is_deleted pour filtrer correctement à l'export
-if "is_deleted" not in _df_full.columns:
-    _df_full["is_deleted"] = "0"
-_df_full["is_deleted"] = _normalize_is_deleted(_df_full["is_deleted"])
-_df_export = _df_full[_df_full["is_deleted"] != "1"][["name","lat","lon","seasons"]].copy()
-st.download_button(
-    "⬇️ Télécharger tous les points (CSV)",
-    data=_df_export.to_csv(index=False),
-    file_name="arbres_lausanne.csv",
-    mime="text/csv",
-)
+    st.markdown("---")
+    _df_full = _read_df()
+    # Normalise is_deleted pour filtrer correctement à l'export
+    if "is_deleted" not in _df_full.columns:
+        _df_full["is_deleted"] = "0"
+    _df_full["is_deleted"] = _normalize_is_deleted(_df_full["is_deleted"])
+    _df_export = _df_full[_df_full["is_deleted"] != "1"][["name","lat","lon","seasons"]].copy()
+    st.download_button(
+        "⬇️ Télécharger tous les points (CSV)",
+        data=_df_export.to_csv(index=False),
+        file_name="arbres_lausanne.csv",
+        mime="text/csv",
+    )
+
 st.caption(f"🌳 Points affichés : {len(filtered)} / {len(st.session_state['trees'])}")
+
