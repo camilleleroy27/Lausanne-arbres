@@ -248,11 +248,14 @@ colors = {
     "Poire": "lightgreen",
     "Kaki": "orange",
     "Sureau": "black",
-    "Faînes": "#A0522D"
+    "Faînes": "#A0522D",   # marron pour les faînes
+
     # champignons
     "Bolets": "#8B4513",
     "Chanterelles": "orange",
-    "Morilles": "black",
+    "Morilles": "black"
+}
+
 }
 MUSHROOM_SET = {"Bolets", "Chanterelles", "Morilles"}
 
