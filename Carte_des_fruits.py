@@ -290,31 +290,40 @@ with st.sidebar.form("add_or_delete_form"):
             except Exception as e:
                 st.error(f"Erreur lors de l'ajout : {e}")
 
-    else:  # Supprimer
-        trees = st.session_state.get("trees", [])
-        if not trees:
-            st.info("Aucun point à supprimer.")
-            _ = st.form_submit_button("Supprimer définitivement", disabled=True)
-        else:
-            options_labels, idx_to_id = [], {}
-            for i, t in enumerate(trees):
-                seasons_txt = _serialize_seasons(t.get("seasons", [])) or "—"
-                options_labels.append(f"{i+1}. {t['name']} – {t['lat']:.5f}, {t['lon']:.5f} [{seasons_txt}]")
-                idx_to_id[i] = t["id"]
+   else:  # Supprimer
+    trees = st.session_state.get("trees", [])
+    if not trees:
+        st.info("Aucun point à supprimer.")
+        st.sidebar.form("delete_form").form_submit_button("Supprimer définitivement", disabled=True)  # bouton inactif si aucun
+    else:
+        options_labels, idx_to_id = [], {}
+        for i, t in enumerate(trees):
+            seasons_txt = _serialize_seasons(t.get("seasons", [])) or "—"
+            options_labels.append(f"{i+1}. {t['name']} – {t['lat']:.5f}, {t['lon']:.5f} [{seasons_txt}]")
+            idx_to_id[i] = t["id"]
 
-            idx_choice = st.selectbox("Choisis le point à supprimer", options=list(idx_to_id.keys()), format_func=lambda i: options_labels[i])
+        with st.sidebar.form("delete_form"):
+            idx_choice = st.selectbox(
+                "Choisis le point à supprimer",
+                options=list(idx_to_id.keys()),
+                format_func=lambda i: options_labels[i]
+            )
             confirm = st.checkbox("Je confirme la suppression", value=False)
-            submitted_del = st.form_submit_button("Supprimer définitivement", disabled=not confirm)
+            submitted_del = st.form_submit_button("Supprimer définitivement")
 
-            if submitted_del and confirm:
+        if submitted_del:
+            if not confirm:
+                st.warning("Coche d'abord la case « Je confirme la suppression ».")
+            else:
                 try:
                     ok = soft_delete_item(idx_to_id[idx_choice])
                     if ok:
                         st.session_state["trees"] = load_items()
                         st.success("Point supprimé (soft delete) ✅")
-                        st.rerun()  # 🔁 reconstruit la carte
+                        st.rerun()
                 except Exception as e:
                     st.error(f"Erreur lors de la suppression : {e}")
+
 
 # ============================================================
 # 5) Filtres + recherche
