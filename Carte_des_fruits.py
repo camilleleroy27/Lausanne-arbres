@@ -255,8 +255,6 @@ colors = {
     "Chanterelles": "orange",
     "Morilles": "black"
 }
-
-}
 MUSHROOM_SET = {"Bolets", "Chanterelles", "Morilles"}
 
 # ============================================================
