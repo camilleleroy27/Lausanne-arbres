@@ -733,4 +733,3 @@ with st.expander("📊 Statistiques & export", expanded=not MOBILE_COMPACT):
     )
 
 st.caption(f"🌳 Points affichés : {len(filtered)} / {len(st.session_state['trees'])}")
-``
