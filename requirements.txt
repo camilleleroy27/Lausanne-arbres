@@ -3,3 +3,5 @@ folium
 streamlit-folium
 geopy
 pandas
+gspread
+google-auth
