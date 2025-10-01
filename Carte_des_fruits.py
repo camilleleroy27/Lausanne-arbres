@@ -18,19 +18,27 @@ try:
 except Exception:
     HAS_GEOPY = False
 
-st.set_page_config(page_title="Arbres & champignons – Lausanne", layout="wide")
+# === Page config (sidebar repliée par défaut pour mobile) ===
+st.set_page_config(
+    page_title="Arbres & champignons – Lausanne",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
 st.title("Carte des arbres fruitiers & champignons à Lausanne")
 
 # ====== Mode mobile / compact (UI responsive légère) ======
 MOBILE_COMPACT = st.sidebar.toggle("📱 Mode compact (mobile)", value=True)
+FULLSCREEN_MAP = st.sidebar.toggle("🗺️ Plein écran carte", value=True if MOBILE_COMPACT else False)
 
-# CSS responsive pour petits écrans
+# CSS responsive pour petits écrans + finitions
 st.markdown("""
 <style>
 /* Réduit les marges globales sur mobile */
 @media (max-width: 640px){
   .block-container { padding: 0.6rem 0.7rem !important; }
   .stSidebar { width: 78vw !important; } /* tiroir un peu plus large */
+  header[data-testid="stHeader"] { height: 0; min-height: 0; }
+  footer { display: none; }
 }
 /* Légende plus petite et moins intrusive sur mobile */
 @media (max-width: 640px){
@@ -44,16 +52,20 @@ st.markdown("""
 }
 /* Évite que la carte déborde horizontalement */
 [data-testid="stHorizontalBlock"] { overflow: visible !important; }
+/* Popups Leaflet lisibles au doigt */
+.leaflet-popup-content { font-size: 14px; line-height: 1.2; }
 </style>
 """, unsafe_allow_html=True)
 
-# Hauteur de carte adaptée (plus grande en mode mobile compact)
+# Hauteur de carte (responsive + plein écran)
 MAP_HEIGHT = 520
 if MOBILE_COMPACT:
-    MAP_HEIGHT = 620  # plus de hauteur utile sur petit écran
+    MAP_HEIGHT = 640
+if FULLSCREEN_MAP:     # prime sur tout
+    MAP_HEIGHT = 740 if MOBILE_COMPACT else 680
 
-# Petite astuce UX : info pour replier la barre latérale sur mobile
-if MOBILE_COMPACT:
+# Astuce mobile
+if MOBILE_COMPACT and not FULLSCREEN_MAP:
     st.caption("📱 Astuce mobile : replie la barre latérale via l’icône ☰ pour profiter de toute la largeur de la carte.")
 
 # ============================================================
@@ -109,11 +121,10 @@ def _gsheets_open():
     creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
     gc = gspread.authorize(creds)
 
-    # ✅ Lis l'URL et le nom d’onglet soit à la racine, soit (si jamais) dans le bloc gcp_service_account
+    # URL & nom d’onglet depuis secrets (racine ou bloc gcp_service_account)
     url = st.secrets.get("gsheets_spreadsheet_url") or st.secrets["gcp_service_account"].get("gsheets_spreadsheet_url")
     ws_name = st.secrets.get("gsheets_worksheet_name") or st.secrets["gcp_service_account"].get("gsheets_worksheet_name", "points")
 
-    # Ouvre par URL complète ou par ID pur
     sh = gc.open_by_url(url) if str(url).startswith(("http://", "https://")) else gc.open_by_key(url)
 
     # Onglet
@@ -166,13 +177,9 @@ def _to_float_or_none(v):
 def load_items():
     """Retourne les items (non supprimés) comme liste de dicts."""
     df = _read_df()
-
-    # Uniformise is_deleted en '0'/'1'
     if "is_deleted" not in df.columns:
         df["is_deleted"] = "0"
     df["is_deleted"] = _normalize_is_deleted(df["is_deleted"])
-
-    # Ne garde que les lignes non supprimées
     df = df[df["is_deleted"] != "1"].copy()
 
     items = []
@@ -180,7 +187,6 @@ def load_items():
         lat = _to_float_or_none(row.get("lat"))
         lon = _to_float_or_none(row.get("lon"))
         if lat is None or lon is None:
-            # ignore lignes invalides
             continue
         items.append({
             "id": str(row.get("id")),
@@ -208,12 +214,9 @@ def add_item(name: str, lat: float, lon: float, seasons: list):
 
 def soft_delete_item(item_id: str) -> bool:
     """Marque is_deleted=1 et met à jour updated_at pour l'item donné (1 seule mise à jour)."""
-    import gspread
     from gspread.utils import rowcol_to_a1
-
     ws = _gsheets_open()
     values = ws.get_all_values()  # inclut l'entête
-
     if not values:
         return False
 
@@ -232,23 +235,15 @@ def soft_delete_item(item_id: str) -> bool:
         if values[r-1][id_col-1] == str(item_id):
             row_idx = r
             break
-
     if row_idx is None:
         st.warning("ID non trouvé ; rien supprimé.")
         return False
 
-    # Construit la plage A1 pour les deux cellules à mettre à jour
+    # Mise à jour en 1 appel : [ [is_deleted, updated_at] ]
     start_a1 = rowcol_to_a1(row_idx, isdel_col)
     end_a1   = rowcol_to_a1(row_idx, upd_col)
     rng = f"{start_a1}:{end_a1}"
-
-    # Mise à jour en 1 appel : [ [is_deleted, updated_at] ]
-    ws.update(
-        rng,
-        [[ "1", _now_iso() ]],
-        value_input_option="RAW"
-    )
-
+    ws.update(rng, [["1", _now_iso()]], value_input_option="RAW")
     _invalidate_cache()
     return True
 
@@ -292,12 +287,11 @@ colors = {
 MUSHROOM_SET = {"Bolets", "Chanterelles", "Morilles"}
 
 # ============================================================
-# 4) Barre latérale — ordre : Filtres → Recherche → Ajout/Suppression → Refresh
+# 4) Barre latérale — Filtres → Expanders (Recherche / Ajout-Suppression) → Refresh
 # ============================================================
 
-# ---------- (1) FILTRES EN PREMIER ----------
+# (1) FILTRES
 st.sidebar.header("Filtres")
-
 basemap_label_to_tiles = {
     "CartoDB positron (clair)": "CartoDB positron",
     "OpenStreetMap": "OpenStreetMap",
@@ -312,130 +306,121 @@ all_seasons = ["printemps", "été", "automne", "hiver"]
 selected_types = st.sidebar.multiselect("Catégorie(s) à afficher", options=all_types, default=[])
 selected_seasons = st.sidebar.multiselect("Saison(s) de récolte", options=all_seasons, default=[])
 
-# ---------- (2) RECHERCHE D'ADRESSE / RUE ----------
-st.sidebar.markdown("---")
-st.sidebar.subheader("🔎 Rechercher une adresse / rue")
+# (2) RECHERCHE
+with st.sidebar.expander("🔎 Rechercher une adresse / rue", expanded=not MOBILE_COMPACT):
+    BBOX_SW = (46.47, 6.48)
+    BBOX_NE = (46.60, 6.80)
 
-BBOX_SW = (46.47, 6.48)
-BBOX_NE = (46.60, 6.80)
-
-def geocode_address_biased(q: str, commune: str) -> Tuple[Optional[float], Optional[float], Optional[str]]:
-    if not HAS_GEOPY:
+    def geocode_address_biased(q: str, commune: str) -> Tuple[Optional[float], Optional[float], Optional[str]]:
+        if not HAS_GEOPY:
+            return None, None, None
+        geolocator = Nominatim(user_agent="carte_arbres_lausanne_app")
+        geocode = RateLimiter(geolocator.geocode, min_delay_seconds=1, swallow_exceptions=True)
+        trials = [
+            f"{q}, {commune}, Vaud, Switzerland" if commune and not commune.startswith("Auto") else q,
+            f"{q}, Lausanne District, Vaud, Switzerland",
+            f"{q}, Vaud, Switzerland",
+            f"{q}, Switzerland",
+            q,
+        ]
+        for query in trials:
+            loc = geocode(query, country_codes="ch", viewbox=(BBOX_SW, BBOX_NE), bounded=False, addressdetails=True, exactly_one=True)
+            if loc:
+                return float(loc.latitude), float(loc.longitude), loc.address
         return None, None, None
-    geolocator = Nominatim(user_agent="carte_arbres_lausanne_app")
-    geocode = RateLimiter(geolocator.geocode, min_delay_seconds=1, swallow_exceptions=True)
-    trials = [
-        f"{q}, {commune}, Vaud, Switzerland" if commune and not commune.startswith("Auto") else q,
-        f"{q}, Lausanne District, Vaud, Switzerland",
-        f"{q}, Vaud, Switzerland",
-        f"{q}, Switzerland",
-        q,
+
+    COMMUNES = [
+        "Auto (région Lausanne)", "Lausanne", "Pully", "Lutry", "Paudex",
+        "Épalinges", "Prilly", "Renens", "Crissier",
+        "Chavannes-près-Renens", "Ecublens", "Le Mont-sur-Lausanne", "Belmont-sur-Lausanne",
     ]
-    for query in trials:
-        loc = geocode(query, country_codes="ch", viewbox=(BBOX_SW, BBOX_NE), bounded=False, addressdetails=True, exactly_one=True)
-        if loc:
-            return float(loc.latitude), float(loc.longitude), loc.address
-    return None, None, None
-
-COMMUNES = [
-    "Auto (région Lausanne)", "Lausanne", "Pully", "Lutry", "Paudex",
-    "Épalinges", "Prilly", "Renens", "Crissier",
-    "Chavannes-près-Renens", "Ecublens", "Le Mont-sur-Lausanne", "Belmont-sur-Lausanne",
-]
-addr = st.sidebar.text_input("Adresse (ex: Avenue de Lavaux 10)")
-commune_choice = st.sidebar.selectbox("Commune (optionnel)", COMMUNES, index=0)
-
-c1, c2 = st.sidebar.columns(2)
-if c1.button("Chercher"):
-    if not addr.strip():
-        st.sidebar.warning("Saisis une adresse.")
-    elif not HAS_GEOPY:
-        st.sidebar.error("geopy n'est pas installé (python3 -m pip install geopy).")
-    else:
-        lat, lon, label = geocode_address_biased(addr.strip(), commune_choice)
-        if lat and lon:
-            st.session_state["search_center"] = (lat, lon)
-            st.session_state["search_label"] = label or f"{addr.strip()} ({commune_choice})"
-            st.sidebar.success("Adresse trouvée ✅")
+    addr = st.text_input("Adresse (ex: Avenue de Lavaux 10)")
+    commune_choice = st.selectbox("Commune (optionnel)", COMMUNES, index=0)
+    c1, c2 = st.columns(2)
+    if c1.button("Chercher"):
+        if not addr.strip():
+            st.warning("Saisis une adresse.")
+        elif not HAS_GEOPY:
+            st.error("geopy n'est pas installé (python3 -m pip install geopy).")
         else:
-            st.session_state["search_center"] = None
-            st.session_state["search_label"] = ""
-            st.sidebar.error("Adresse introuvable. Essaie avec un numéro ou une autre commune.")
-
-if c2.button("Réinitialiser"):
-    st.session_state["search_center"] = None
-    st.session_state["search_label"] = ""
-
-# ---------- (3) AJOUTER / SUPPRIMER UN POINT (en bas) ----------
-st.sidebar.markdown("---")
-st.sidebar.subheader("➕/➖ Ajouter ou supprimer un point")
-
-mode = st.sidebar.radio("Choisir mode", ["Ajouter", "Supprimer"], index=0, horizontal=True, label_visibility="collapsed")
-
-# --- Mode AJOUTER ---
-if mode == "Ajouter":
-    with st.sidebar.form("add_form"):
-        new_name = st.selectbox(
-            "Catégorie",
-            options=sorted(set(CATALOG + [t["name"] for t in st.session_state["trees"]])),
-            index=0
-        )
-        col_a, col_b = st.columns(2)
-        with col_a:
-            new_lat = st.number_input("Latitude", value=46.519100, format="%.6f")
-        with col_b:
-            new_lon = st.number_input("Longitude", value=6.633600, format="%.6f")
-        all_seasons = ["printemps", "été", "automne", "hiver"]
-        new_seasons = st.multiselect("Saison(s)", options=all_seasons, default=["automne"])
-
-        submitted_add = st.form_submit_button("Ajouter & enregistrer")
-        if submitted_add:
-            try:
-                add_item(new_name, float(new_lat), float(new_lon), new_seasons or [])
-                if new_name not in colors:
-                    colors[new_name] = "green"
-                st.session_state["trees"] = load_items()
-                st.success(f"Ajouté : {new_name} ✅ (persisté)")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Erreur lors de l'ajout : {e}")
-
-# --- Mode SUPPRIMER ---
-else:
-    trees = st.session_state.get("trees", [])
-    if not trees:
-        st.info("Aucun point à supprimer.")
-    else:
-        options_labels, idx_to_id = [], {}
-        for i, t in enumerate(trees):
-            seasons_txt = _serialize_seasons(t.get("seasons", [])) or "—"
-            options_labels.append(f"{i+1}. {t['name']} – {t['lat']:.5f}, {t['lon']:.5f} [{seasons_txt}]")
-            idx_to_id[i] = t["id"]
-
-        confirm = st.sidebar.checkbox("Je confirme la suppression", value=False, key="confirm_delete")
-
-        with st.sidebar.form("delete_form"):
-            idx_choice = st.selectbox(
-                "Choisis le point à supprimer",
-                options=list(idx_to_id.keys()),
-                format_func=lambda i: options_labels[i]
-            )
-            submitted_del = st.form_submit_button("Supprimer définitivement", disabled=not st.session_state["confirm_delete"])
-
-        if submitted_del:
-            if not confirm:
-                st.warning("Coche d'abord la case « Je confirme la suppression ».")
+            lat, lon, label = geocode_address_biased(addr.strip(), commune_choice)
+            if lat and lon:
+                st.session_state["search_center"] = (lat, lon)
+                st.session_state["search_label"] = label or f"{addr.strip()} ({commune_choice})"
+                st.success("Adresse trouvée ✅")
             else:
-                try:
-                    ok = soft_delete_item(idx_to_id[idx_choice])
-                    if ok:
-                        st.session_state["trees"] = load_items()
-                        st.success("Point supprimé (soft delete) ✅")
-                        st.rerun()
-                except Exception as e:
-                    st.error(f"Erreur lors de la suppression : {e}")
+                st.session_state["search_center"] = None
+                st.session_state["search_label"] = ""
+                st.error("Adresse introuvable. Essaie avec un numéro ou une autre commune.")
+    if c2.button("Réinitialiser"):
+        st.session_state["search_center"] = None
+        st.session_state["search_label"] = ""
 
-# ---------- (4) BOUTON RAFRAÎCHIR TOUT EN BAS ----------
+# (3) AJOUTER / SUPPRIMER
+with st.sidebar.expander("➕/➖ Ajouter ou supprimer un point", expanded=not MOBILE_COMPACT):
+    mode = st.radio("Choisir mode", ["Ajouter", "Supprimer"], index=0, horizontal=True, label_visibility="collapsed")
+
+    if mode == "Ajouter":
+        with st.form("add_form"):
+            new_name = st.selectbox(
+                "Catégorie",
+                options=sorted(set(CATALOG + [t["name"] for t in st.session_state["trees"]])),
+                index=0
+            )
+            col_a, col_b = st.columns(2)
+            with col_a:
+                new_lat = st.number_input("Latitude", value=46.519100, format="%.6f")
+            with col_b:
+                new_lon = st.number_input("Longitude", value=6.633600, format="%.6f")
+            all_seasons = ["printemps", "été", "automne", "hiver"]
+            new_seasons = st.multiselect("Saison(s)", options=all_seasons, default=["automne"])
+
+            submitted_add = st.form_submit_button("Ajouter & enregistrer")
+            if submitted_add:
+                try:
+                    add_item(new_name, float(new_lat), float(new_lon), new_seasons or [])
+                    if new_name not in colors:
+                        colors[new_name] = "green"
+                    st.session_state["trees"] = load_items()
+                    st.success(f"Ajouté : {new_name} ✅ (persisté)")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erreur lors de l'ajout : {e}")
+
+    else:
+        trees = st.session_state.get("trees", [])
+        if not trees:
+            st.info("Aucun point à supprimer.")
+        else:
+            options_labels, idx_to_id = [], {}
+            for i, t in enumerate(trees):
+                seasons_txt = _serialize_seasons(t.get("seasons", [])) or "—"
+                options_labels.append(f"{i+1}. {t['name']} – {t['lat']:.5f}, {t['lon']:.5f} [{seasons_txt}]")
+                idx_to_id[i] = t["id"]
+
+            confirm = st.checkbox("Je confirme la suppression", value=False, key="confirm_delete")
+            with st.form("delete_form"):
+                idx_choice = st.selectbox(
+                    "Choisis le point à supprimer",
+                    options=list(idx_to_id.keys()),
+                    format_func=lambda i: options_labels[i]
+                )
+                submitted_del = st.form_submit_button("Supprimer définitivement", disabled=not st.session_state["confirm_delete"])
+
+            if submitted_del:
+                if not confirm:
+                    st.warning("Coche d'abord la case « Je confirme la suppression ».")
+                else:
+                    try:
+                        ok = soft_delete_item(idx_to_id[idx_choice])
+                        if ok:
+                            st.session_state["trees"] = load_items()
+                            st.success("Point supprimé (soft delete) ✅")
+                            st.rerun()
+                    except Exception as e:
+                        st.error(f"Erreur lors de la suppression : {e}")
+
+# (4) BOUTON RAFRAÎCHIR
 st.sidebar.markdown("---")
 if st.sidebar.button("🔄 Rafraîchir les données"):
     _invalidate_cache()
@@ -450,7 +435,6 @@ if selected_types:
     filtered = [t for t in filtered if t["name"] in selected_types]
 if selected_seasons:
     filtered = [t for t in filtered if any(s in selected_seasons for s in t["seasons"])]
-
 
 # ============================================================
 # 6) Carte
@@ -569,8 +553,8 @@ for name in sorted(set(CATALOG)):
     """)
 legend_body = "".join(legend_rows)
 
-# place ceci AVANT de construire legend_html
-legend_open_attr = "open" if not MOBILE_COMPACT else ""
+# Légende ouverte sur desktop, fermée en mobile et/ou plein écran
+legend_open_attr = "open" if (not MOBILE_COMPACT and not FULLSCREEN_MAP) else ""
 
 legend_html = f"""
 <style>
@@ -586,9 +570,7 @@ legend_html = f"""
   </details>
 </div>
 """
-
 m.get_root().html.add_child(folium.Element(legend_html))
-
 
 # Affichage carte
 st_folium(m, width=None, height=MAP_HEIGHT)
@@ -596,28 +578,27 @@ st_folium(m, width=None, height=MAP_HEIGHT)
 # ============================================================
 # 7) Stats & export
 # ============================================================
-with st.expander("📊 Statistiques & export", expanded=not MOBILE_COMPACT):
-    counts = Counter(t["name"] for t in filtered)
-    total = len(filtered)
-    if total == 0:
-        st.write("Aucun point (vérifie les filtres).")
-    else:
-        st.write(f"Total : **{total}**")
-        st.markdown("\n".join(f"- {k} : **{counts[k]}**" for k in sorted(counts)))
+if not FULLSCREEN_MAP:
+    with st.expander("📊 Statistiques & export", expanded=not MOBILE_COMPACT):
+        counts = Counter(t["name"] for t in filtered)
+        total = len(filtered)
+        if total == 0:
+            st.write("Aucun point (vérifie les filtres).")
+        else:
+            st.write(f"Total : **{total}**")
+            st.markdown("\n".join(f"- {k} : **{counts[k]}**" for k in sorted(counts)))
 
-    st.markdown("---")
-    _df_full = _read_df()
-    # Normalise is_deleted pour filtrer correctement à l'export
-    if "is_deleted" not in _df_full.columns:
-        _df_full["is_deleted"] = "0"
-    _df_full["is_deleted"] = _normalize_is_deleted(_df_full["is_deleted"])
-    _df_export = _df_full[_df_full["is_deleted"] != "1"][["name","lat","lon","seasons"]].copy()
-    st.download_button(
-        "⬇️ Télécharger tous les points (CSV)",
-        data=_df_export.to_csv(index=False),
-        file_name="arbres_lausanne.csv",
-        mime="text/csv",
-    )
+        st.markdown("---")
+        _df_full = _read_df()
+        if "is_deleted" not in _df_full.columns:
+            _df_full["is_deleted"] = "0"
+        _df_full["is_deleted"] = _normalize_is_deleted(_df_full["is_deleted"])
+        _df_export = _df_full[_df_full["is_deleted"] != "1"][["name","lat","lon","seasons"]].copy()
+        st.download_button(
+            "⬇️ Télécharger tous les points (CSV)",
+            data=_df_export.to_csv(index=False),
+            file_name="arbres_lausanne.csv",
+            mime="text/csv",
+        )
 
 st.caption(f"🌳 Points affichés : {len(filtered)} / {len(st.session_state['trees'])}")
-
