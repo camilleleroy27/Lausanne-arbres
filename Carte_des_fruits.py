@@ -102,26 +102,26 @@ mobile_css = """
 }
 
 /* ======== 5) Bouton ">>" (toggle sidebar) toujours visible sur mobile ======== */
+/* Bouton ">>" toujours visible et contrasté, même quand la sidebar est ouverte */
 @media (max-width: 640px){
-  [data-testid="collapsedControl"]{
+  [data-testid="collapsedControl"] {
     position: fixed !important;
-    top: 8px !important;
-    left: 8px !important;
-    z-index: 10001 !important;
+    top: 10px !important;
+    left: 10px !important;
+    z-index: 20000 !important;  /* au-dessus de la sidebar */
   }
-  [data-testid="collapsedControl"] button{
-    background: #f4f4f8 !important;
-    border: 1px solid rgba(0,0,0,.2) !important;
+  [data-testid="collapsedControl"] button {
+    background: #f0f0f5 !important;   /* fond gris clair */
+    border: 1px solid rgba(0,0,0,.25) !important;
     border-radius: 12px !important;
-    box-shadow: 0 1px 6px rgba(0,0,0,.2) !important;
+    box-shadow: 0 2px 6px rgba(0,0,0,.25) !important;
     color: #222 !important;
   }
-  /* Icône plus foncée, toujours visible */
-  [data-testid="collapsedControl"] svg{
+  [data-testid="collapsedControl"] svg {
     stroke: #222 !important;
-    filter: drop-shadow(0 0 1px rgba(255,255,255,.7));
   }
 }
+
 
 </style>
 """
