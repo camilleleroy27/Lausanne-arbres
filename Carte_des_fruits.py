@@ -569,6 +569,9 @@ for name in sorted(set(CATALOG)):
     """)
 legend_body = "".join(legend_rows)
 
+# place ceci AVANT de construire legend_html
+legend_open_attr = "open" if not MOBILE_COMPACT else ""
+
 legend_html = f"""
 <style>
   #legend-card summary {{ list-style: none; cursor: pointer; font-weight: 600; }}
@@ -577,13 +580,15 @@ legend_html = f"""
   #legend-card details[open] summary::after {{ content: "▾"; }}
 </style>
 <div id="legend-card" style="position: fixed; bottom: 24px; left: 24px; z-index: 9999;">
-  <details style="background:#fff;border:1px solid #ccc;border-radius:10px;padding:8px 10px;box-shadow:0 2px 10px rgba(0,0,0,0.15);max-width:240px;font-size:13px;">
+  <details {legend_open_attr} style="background:#fff;border:1px solid #ccc;border-radius:10px;padding:8px 10px;box-shadow:0 2px 10px rgba(0,0,0,0.15);max-width:240px;font-size:13px;">
     <summary>📖 Légende</summary>
     <div style="margin-top: 8px; max-height: 240px; overflow: auto;">{legend_body}</div>
   </details>
 </div>
 """
+
 m.get_root().html.add_child(folium.Element(legend_html))
+
 
 # Affichage carte
 st_folium(m, width=None, height=MAP_HEIGHT)
