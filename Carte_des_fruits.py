@@ -27,21 +27,31 @@ st.write("url inside gcp_service_account? ->", "gcp_service_account" in st.secre
 
 
 # ============================================================
-# 0) Mode persistant OBLIGATOIRE (Google Sheets) + garde-fou
+# 0) Mode persistant OBLIGATOIRE (Google Sheets) + garde-fou tolérant
 # ============================================================
-REQUIRED_SECRETS = ["gcp_service_account", "gsheets_spreadsheet_url"]
-missing = [k for k in REQUIRED_SECRETS if k not in st.secrets]
+has_gcp = "gcp_service_account" in st.secrets
+url_root = st.secrets.get("gsheets_spreadsheet_url")
+url_in_gcp = st.secrets.get("gcp_service_account", {}).get("gsheets_spreadsheet_url") if has_gcp else None
+url_any = url_root or url_in_gcp
+
+missing = []
+if not has_gcp:
+    missing.append("gcp_service_account")
+if not url_any:
+    missing.append("gsheets_spreadsheet_url")
+
 if missing:
     st.error(
         "Configuration manquante pour le stockage persistant : "
         + ", ".join(missing)
         + ".\n\n"
-        "👉 Va dans App → Settings → Secrets et ajoute ces clés :\n"
-        "- gcp_service_account (JSON de compte de service)\n"
-        "- gsheets_spreadsheet_url (URL ou clé du Google Sheet)\n"
-        "Optionnel : gsheets_worksheet_name (par défaut 'points')"
+        "👉 Mets dans Paramètres → Secrets :\n"
+        "- [gcp_service_account] (bloc TOML avec la clé JSON)\n"
+        "- gsheets_spreadsheet_url (à la racine **ou** dans le bloc gcp_service_account)\n"
+        "Optionnel : gsheets_worksheet_name (à la racine ou dans gcp_service_account ; défaut 'points')"
     )
     st.stop()
+
 
 # ============================================================
 # 1) Persistance (Google Sheets uniquement)
@@ -70,15 +80,21 @@ def _gsheets_open():
     creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
     gc = gspread.authorize(creds)
 
-    url = st.secrets["gsheets_spreadsheet_url"]
-    ws_name = st.secrets.get("gsheets_worksheet_name", "points")
-    sh = gc.open_by_url(url) if str(url).startswith("http") else gc.open_by_key(url)
+    # ✅ Lis l'URL et le nom de l’onglet soit à la racine des secrets,
+    # soit (si jamais) dans le bloc gcp_service_account
+    url = st.secrets.get("gsheets_spreadsheet_url") or st.secrets["gcp_service_account"].get("gsheets_spreadsheet_url")
+    ws_name = st.secrets.get("gsheets_worksheet_name") or st.secrets["gcp_service_account"].get("gsheets_worksheet_name", "points")
+
+    # Ouvre par URL complète ou par ID pur
+    sh = gc.open_by_url(url) if str(url).startswith(("http://", "https://")) else gc.open_by_key(url)
+
     try:
         ws = sh.worksheet(ws_name)
     except Exception:
         ws = sh.add_worksheet(title=ws_name, rows=1000, cols=10)
-        ws.update("A1:G1", [["id","name","lat","lon","seasons","is_deleted","updated_at"]])
+        ws.update("A1:G1", [["id", "name", "lat", "lon", "seasons", "is_deleted", "updated_at"]])
     return ws
+
 
 @st.cache_data(ttl=10)
 def _read_df():
