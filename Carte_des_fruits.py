@@ -9,7 +9,6 @@ from typing import Optional, Tuple
 import urllib.parse
 import uuid
 from datetime import datetime
-import streamlit.components.v1 as components  # <-- pour le bouton flottant (fallback)
 
 # --- géocodage (optionnel) ---
 try:
@@ -40,7 +39,7 @@ if not MOBILE_COMPACT:
     st.title("Carte des arbres fruitiers & champignons à Lausanne")
 
 # =========================================
-# CSS responsive + appbar mobile
+# CSS responsive + (pas de JS)
 # =========================================
 mobile_css = """
 <style>
@@ -48,7 +47,7 @@ mobile_css = """
 @media (max-width: 640px){
   .block-container { padding: 0.6rem 0.7rem !important; }
   [data-testid="stHorizontalBlock"] { overflow: visible !important; }
-  /* Sidebar un peu plus large sur mobile, au-dessus des overlays */
+  /* Sidebar plus large et au-dessus */
   .stSidebar { width: 84vw !important; z-index: 10000 !important; }
 }
 
@@ -102,21 +101,21 @@ mobile_css = """
   .stSelectbox, .stTextInput, .stNumberInput { font-size: .98rem !important; }
 }
 
-/* ======== 5) Bouton ">>" (toggle sidebar) visible & contrasté, même sidebar ouverte ======== */
+/* ======== 5) Bouton ">>" TOUJOURS visible et contrasté ======== */
+/* a) Quand la sidebar est FERMÉE (bouton dans le contenu principal) */
 @media (max-width: 640px){
   [data-testid="collapsedControl"]{
-    display: block !important;
-    visibility: visible !important;
-    opacity: 1 !important;
-
     position: fixed !important;
     top: 10px !important;
     left: 10px !important;
-    z-index: 20000 !important;  /* au-dessus de la sidebar */
+    z-index: 20000 !important;  /* au-dessus de tout */
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
     pointer-events: auto !important;
   }
   [data-testid="collapsedControl"] button{
-    background: #f0f0f5 !important;   /* fond gris clair */
+    background: #f0f0f5 !important;   /* fond gris clair, visible sur le blanc */
     border: 1px solid rgba(0,0,0,.25) !important;
     border-radius: 12px !important;
     box-shadow: 0 2px 6px rgba(0,0,0,.25) !important;
@@ -127,78 +126,29 @@ mobile_css = """
   }
 }
 
-/* (Optionnel) Masque le bouton flottant custom sur desktop */
-@media (min-width: 641px){
-  #sb-float-toggle { display: none !important; }
+/* b) Quand la sidebar est OUVERTE (Streamlit met le bouton dans la sidebar) */
+@media (max-width: 640px){
+  .stSidebar [data-testid="collapsedControl"]{
+    position: fixed !important;   /* on sort le bouton du header de la sidebar */
+    top: 10px !important;
+    left: 10px !important;        /* proche du bord gauche de l'écran */
+    transform: none !important;
+    z-index: 20001 !important;    /* au-dessus de la sidebar elle-même */
+  }
+  .stSidebar [data-testid="collapsedControl"] button{
+    background: #f0f0f5 !important;  /* PAS blanc -> on le voit sur fond blanc */
+    border: 1px solid rgba(0,0,0,.25) !important;
+    border-radius: 12px !important;
+    box-shadow: 0 2px 6px rgba(0,0,0,.25) !important;
+    color: #222 !important;
+  }
+  .stSidebar [data-testid="collapsedControl"] svg{
+    stroke: #222 !important;
+  }
 }
 </style>
 """
 st.markdown(mobile_css, unsafe_allow_html=True)
-
-# === Fallback universel : bouton flottant ≡ / × toujours visible (mobile) ===
-if MOBILE_COMPACT:
-    components.html("""
-    <script>
-    (function(){
-      const doc = window.parent.document;
-
-      function hasSidebarOpen(){
-        const sb = doc.querySelector('[data-testid="stSidebar"]');
-        if (!sb) return false;
-        // Heuristique: largeur > 0 ou transform appliqué => ouverte
-        const rect = sb.getBoundingClientRect();
-        return rect.width > 0 && rect.right > 0;
-      }
-
-      function clickNativeToggle(){
-        const btn = doc.querySelector('[data-testid="collapsedControl"] button');
-        if (btn){ btn.click(); return true; }
-        return false;
-      }
-
-      function updateFloatingButtonIcon(el){
-        el.textContent = hasSidebarOpen() ? '×' : '≡';
-        el.title = hasSidebarOpen() ? 'Fermer le menu' : 'Ouvrir le menu';
-      }
-
-      // Evite doublons
-      if (!doc.getElementById('sb-float-toggle')) {
-        const toggle = doc.createElement('button');
-        toggle.id = 'sb-float-toggle';
-        toggle.type = 'button';
-        updateFloatingButtonIcon(toggle);
-        Object.assign(toggle.style, {
-          position:'fixed',
-          top:'10px',
-          left:'10px',
-          zIndex:'30000',
-          background:'#f0f0f5',
-          border:'1px solid rgba(0,0,0,.25)',
-          borderRadius:'12px',
-          padding:'6px 10px',
-          fontSize:'18px',
-          boxShadow:'0 2px 6px rgba(0,0,0,.25)',
-          cursor:'pointer'
-        });
-        toggle.addEventListener('click', function(e){
-          e.stopPropagation();
-          if (!clickNativeToggle()){
-            // Si le bouton natif est introuvable, on tente de cliquer là où il se trouve d’habitude
-            const fake = doc.querySelector('[data-testid="stSidebar"] header button, [role=button]');
-            if (fake) fake.click();
-          }
-          // Laisse un petit temps pour que le DOM se mette à jour, puis met à jour l'icône
-          setTimeout(()=>updateFloatingButtonIcon(toggle), 100);
-        });
-        doc.body.appendChild(toggle);
-
-        // Observe les changements de layout pour rafraîchir l'icône (ouverture/fermeture via d'autres clics)
-        const obs = new MutationObserver(()=>updateFloatingButtonIcon(toggle));
-        obs.observe(doc.body, { attributes:true, childList:true, subtree:true });
-      }
-    })();
-    </script>
-    """, height=0, width=0)
 
 # Hauteur carte adaptée
 MAP_HEIGHT = 520
@@ -257,14 +207,11 @@ def _gsheets_open():
     creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
     gc = gspread.authorize(creds)
 
-    # ✅ Lis l'URL et le nom d’onglet soit à la racine, soit (si jamais) dans le bloc gcp_service_account
     url = st.secrets.get("gsheets_spreadsheet_url") or st.secrets["gcp_service_account"].get("gsheets_spreadsheet_url")
     ws_name = st.secrets.get("gsheets_worksheet_name") or st.secrets["gcp_service_account"].get("gsheets_worksheet_name", "points")
 
-    # Ouvre par URL complète ou par ID pur
     sh = gc.open_by_url(url) if str(url).startswith(("http://", "https://")) else gc.open_by_key(url)
 
-    # Onglet
     try:
         ws = sh.worksheet(ws_name)
     except Exception:
@@ -274,7 +221,6 @@ def _gsheets_open():
 
 @st.cache_data(ttl=10)
 def _read_df():
-    """Lit toutes les lignes depuis Google Sheets (avec cache court)."""
     ws = _gsheets_open()
     rows = ws.get_all_records()
     if not rows:
@@ -290,11 +236,10 @@ def _invalidate_cache():
     st.cache_data.clear()
 
 def _normalize_is_deleted(series: pd.Series) -> pd.Series:
-    """Uniformise is_deleted en chaîne '0'/'1' robuste aux formats bizarres."""
     return (
         series.astype(str)
         .str.strip()
-        .str.replace("\u202f", "", regex=False)  # espace fine insécable
+        .str.replace("\u202f", "", regex=False)
         .str.replace(" ", "", regex=False)
         .str.replace(",", ".", regex=False)
         .str.extract(r"(\d+)")
@@ -302,26 +247,19 @@ def _normalize_is_deleted(series: pd.Series) -> pd.Series:
     )
 
 def _to_float_or_none(v):
-    """Parse tolérant pour lat/lon: accepte virgule décimale, espaces, etc."""
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return None
-    s = str(v).strip()
-    s = s.replace("\u202f", "").replace(" ", "").replace(",", ".")
+    s = str(v).strip().replace("\u202f", "").replace(" ", "").replace(",", ".")
     try:
         return float(s)
     except Exception:
         return None
 
 def load_items():
-    """Retourne les items (non supprimés) comme liste de dicts."""
     df = _read_df()
-
-    # Uniformise is_deleted en '0'/'1'
     if "is_deleted" not in df.columns:
         df["is_deleted"] = "0"
     df["is_deleted"] = _normalize_is_deleted(df["is_deleted"])
-
-    # Ne garde que les lignes non supprimées
     df = df[df["is_deleted"] != "1"].copy()
 
     items = []
@@ -342,7 +280,6 @@ def load_items():
     return items
 
 def add_item(name: str, lat: float, lon: float, seasons: list):
-    """Append d'un nouvel item (UUID) dans la feuille."""
     ws = _gsheets_open()
     row = [
         str(uuid.uuid4()),
@@ -350,26 +287,24 @@ def add_item(name: str, lat: float, lon: float, seasons: list):
         float(lat),
         float(lon),
         _serialize_seasons(seasons or []),
-        0,  # is_deleted (nombre)
-        _now_iso(),  # updated_at
+        0,
+        _now_iso(),
     ]
     ws.append_row(row, value_input_option="USER_ENTERED")
     _invalidate_cache()
 
 def soft_delete_item(item_id: str) -> bool:
-    """Marque is_deleted=1 et met à jour updated_at pour l'item donné (1 seule mise à jour)."""
     import gspread
     from gspread.utils import rowcol_to_a1
 
     ws = _gsheets_open()
-    values = ws.get_all_values()  # inclut l'entête
-
+    values = ws.get_all_values()
     if not values:
         return False
 
     headers = values[0]
     try:
-        id_col = headers.index("id") + 1  # 1-indexed
+        id_col = headers.index("id") + 1
         isdel_col = headers.index("is_deleted") + 1
         upd_col = headers.index("updated_at") + 1
     except ValueError:
@@ -389,7 +324,6 @@ def soft_delete_item(item_id: str) -> bool:
     start_a1 = rowcol_to_a1(row_idx, isdel_col)
     end_a1 = rowcol_to_a1(row_idx, upd_col)
     rng = f"{start_a1}:{end_a1}"
-
     ws.update(rng, [["1", _now_iso()]], value_input_option="RAW")
 
     _invalidate_cache()
@@ -535,7 +469,6 @@ st.sidebar.subheader("➕/➖ Ajouter ou supprimer un point")
 
 mode = st.sidebar.radio("Choisir mode", ["Ajouter", "Supprimer"], index=0, horizontal=True, label_visibility="collapsed")
 
-# --- Mode AJOUTER ---
 if mode == "Ajouter":
     with st.sidebar.form("add_form"):
         new_name = st.selectbox(
@@ -562,8 +495,6 @@ if mode == "Ajouter":
                 st.rerun()
             except Exception as e:
                 st.error(f"Erreur lors de l'ajout : {e}")
-
-# --- Mode SUPPRIMER ---
 else:
     trees = st.session_state.get("trees", [])
     if not trees:
@@ -606,7 +537,7 @@ if st.sidebar.button("🔄 Rafraîchir les données"):
     st.rerun()
 
 # ============================================================
-# 5) Filtrage des données (après saisie des filtres)
+# 5) Filtrage des données
 # ============================================================
 filtered = items
 if selected_types:
@@ -627,7 +558,7 @@ else:
 
 m = folium.Map(location=center, zoom_start=zoom, tiles=basemap)
 
-# === Ma maison : Avenue des Collèges 29 ===
+# === repère maison (ex.) ===
 HOUSE_LAT = 46.5105
 HOUSE_LON = 6.6528
 folium.Marker(
@@ -643,7 +574,6 @@ folium.Marker(
 
 cluster = MarkerCluster().add_to(m)
 
-# Pins SVG
 PIN_SVG_TEMPLATE = """
 <svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 36 48">
   <ellipse cx="18" cy="46" rx="7" ry="2.5" fill="rgba(0,0,0,0.25)"/>
@@ -679,7 +609,6 @@ def make_custom_pin(fill_color: str, for_mushroom: bool) -> CustomIcon:
     url = build_pin_svg(fill_color, glyph)
     return CustomIcon(icon_image=url, icon_size=(30, 42), icon_anchor=(15, 40))
 
-# Markers
 def add_tree_marker(tree):
     fill = colors.get(tree["name"], "green")
     folium.Marker(
@@ -712,7 +641,11 @@ if st.session_state["search_center"] is not None:
     ).add_to(m)
     folium.Circle(location=center, radius=35, color="blue", fill=True, fill_opacity=0.15).add_to(m)
 
-# Légende repliable
+# Outils coord
+folium.LatLngPopup().add_to(m)
+MousePosition(position="topright", separator=" | ", empty_string="", num_digits=6, prefix="📍").add_to(m)
+
+# Légende
 def legend_pin_dataurl(name: str) -> str:
     col = colors.get(name, "green")
     if name in MUSHROOM_SET:
