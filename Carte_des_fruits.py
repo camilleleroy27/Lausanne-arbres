@@ -5,9 +5,10 @@ from collections import Counter
 from folium.plugins import MarkerCluster, MousePosition
 from folium.features import CustomIcon
 import pandas as pd
-from pathlib import Path
 from typing import Optional, Tuple
 import urllib.parse
+import uuid
+from datetime import datetime
 
 # --- géocodage (optionnel) ---
 try:
@@ -20,11 +21,26 @@ except Exception:
 st.set_page_config(page_title="Arbres & champignons – Lausanne", layout="wide")
 st.title("Carte des arbres fruitiers & champignons à Lausanne")
 
-# ------------------ Données par défaut ------------------
-initial_items = []  # on démarre vide
+# ============================================================
+# 0) Mode persistant OBLIGATOIRE (Google Sheets) + garde-fou
+# ============================================================
+REQUIRED_SECRETS = ["gcp_service_account", "gsheets_spreadsheet_url"]
+missing = [k for k in REQUIRED_SECRETS if k not in st.secrets]
+if missing:
+    st.error(
+        "Configuration manquante pour le stockage persistant : "
+        + ", ".join(missing)
+        + ".\n\n"
+        "👉 Va dans App → Settings → Secrets et ajoute ces clés :\n"
+        "- gcp_service_account (JSON de compte de service)\n"
+        "- gsheets_spreadsheet_url (URL ou clé du Google Sheet)\n"
+        "Optionnel : gsheets_worksheet_name (par défaut 'points')"
+    )
+    st.stop()
 
-# ------------------ Persistance (CSV local) ------------------
-DATA_CSV = Path("arbres_points.csv")
+# ============================================================
+# 1) Persistance (Google Sheets uniquement)
+# ============================================================
 
 def _serialize_seasons(lst):
     return "|".join(lst or [])
@@ -34,30 +50,105 @@ def _parse_seasons(s):
         return []
     return [x.strip() for x in str(s).split("|")]
 
+def _now_iso():
+    return datetime.utcnow().isoformat(timespec="seconds") + "Z"
+
+def _gsheets_open():
+    import gspread
+    from google.oauth2.service_account import Credentials
+
+    creds_info = st.secrets["gcp_service_account"]
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive.readonly",
+    ]
+    creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
+    gc = gspread.authorize(creds)
+
+    url = st.secrets["gsheets_spreadsheet_url"]
+    ws_name = st.secrets.get("gsheets_worksheet_name", "points")
+    sh = gc.open_by_url(url) if str(url).startswith("http") else gc.open_by_key(url)
+    try:
+        ws = sh.worksheet(ws_name)
+    except Exception:
+        ws = sh.add_worksheet(title=ws_name, rows=1000, cols=10)
+        ws.update("A1:G1", [["id","name","lat","lon","seasons","is_deleted","updated_at"]])
+    return ws
+
+@st.cache_data(ttl=10)
+def _read_df():
+    """Lit toutes les lignes depuis Google Sheets (avec cache court)."""
+    ws = _gsheets_open()
+    rows = ws.get_all_records()
+    if not rows:
+        return pd.DataFrame(columns=["id","name","lat","lon","seasons","is_deleted","updated_at"])
+    df = pd.DataFrame(rows)
+    if "is_deleted" not in df.columns:
+        df["is_deleted"] = "0"
+    if "seasons" not in df.columns:
+        df["seasons"] = ""
+    return df
+
+def _invalidate_cache():
+    st.cache_data.clear()
+
 def load_items():
-    if DATA_CSV.exists():
-        df = pd.read_csv(DATA_CSV)
-        items = []
-        for _, row in df.iterrows():
-            items.append({
-                "name": row["name"],
-                "lat": float(row["lat"]),
-                "lon": float(row["lon"]),
-                "seasons": _parse_seasons(row.get("seasons", "")),
-            })
-        return items
-    return initial_items.copy()
+    """Retourne les items (non supprimés) comme liste de dicts."""
+    df = _read_df()
+    df = df[df["is_deleted"] != "1"].copy()
+    items = []
+    for _, row in df.iterrows():
+        items.append({
+            "id": str(row["id"]),
+            "name": row["name"],
+            "lat": float(row["lat"]),
+            "lon": float(row["lon"]),
+            "seasons": _parse_seasons(row.get("seasons", "")),
+        })
+    return items
 
-def save_items(items):
-    df = pd.DataFrame([{
-        "name": t["name"],
-        "lat": t["lat"],
-        "lon": t["lon"],
-        "seasons": _serialize_seasons(t.get("seasons", [])),
-    } for t in items])
-    df.to_csv(DATA_CSV, index=False)
+def add_item(name: str, lat: float, lon: float, seasons: list):
+    """Append d'un nouvel item (UUID) dans la feuille."""
+    ws = _gsheets_open()
+    row = [
+        str(uuid.uuid4()),
+        name,
+        float(lat),
+        float(lon),
+        _serialize_seasons(seasons or []),
+        "0",           # is_deleted
+        _now_iso(),    # updated_at
+    ]
+    ws.append_row(row, value_input_option="USER_ENTERED")
+    _invalidate_cache()
 
-# ------------------ État (session) ------------------
+def soft_delete_item(item_id: str):
+    """Marque is_deleted=1 pour l'élément correspondant à item_id."""
+    ws = _gsheets_open()
+    values = ws.get_all_values()  # incluant l'entête
+    headers = values[0]
+    try:
+        id_col = headers.index("id")
+        isdel_col = headers.index("is_deleted")
+        upd_col = headers.index("updated_at")
+    except ValueError:
+        st.error("Colonnes attendues absentes dans la feuille (id / is_deleted / updated_at).")
+        return
+    for r_idx in range(1, len(values)):  # sauter l'entête
+        if values[r_idx][id_col] == item_id:
+            # gspread est 1-indexed
+            ws.update_cell(r_idx+1, isdel_col+1, "1")
+            ws.update_cell(r_idx+1, upd_col+1, _now_iso())
+            _invalidate_cache()
+            return
+    st.warning("ID non trouvé ; rien supprimé.")
+
+# ------------------ Données par défaut (non utilisé désormais) ------------------
+initial_items = []  # on démarre vide
+
+# ============================================================
+# 2) État (session)
+# ============================================================
 if "trees" not in st.session_state:
     st.session_state["trees"] = load_items()
 
@@ -68,7 +159,9 @@ if "search_label" not in st.session_state:
 
 items = st.session_state["trees"]
 
-# ------------------ Catalogue & couleurs ------------------
+# ============================================================
+# 3) Catalogue & couleurs
+# ============================================================
 CATALOG = [
     "Pomme", "Poire", "Figue", "Grenade", "Kiwi", "Nèfle", "Kaki",
     "Noix", "Sureau", "Noisette",
@@ -94,7 +187,9 @@ colors = {
 }
 MUSHROOM_SET = {"Bolets", "Chanterelles", "Morilles"}
 
-# ------------------ Barre latérale : filtres + recherche ------------------
+# ============================================================
+# 4) Barre latérale : filtres + recherche
+# ============================================================
 st.sidebar.header("Filtres")
 
 basemap_label_to_tiles = {
@@ -182,14 +277,18 @@ if c2.button("Réinitialiser recherche"):
     st.session_state["search_center"] = None
     st.session_state["search_label"] = ""
 
-# ------------------ Filtrage ------------------
+# ============================================================
+# 5) Filtrage
+# ============================================================
 filtered = items
 if selected_types:
     filtered = [t for t in filtered if t["name"] in selected_types]
 if selected_seasons:
     filtered = [t for t in filtered if any(s in selected_seasons for s in t["seasons"])]
 
-# ------------------ Carte ------------------
+# ============================================================
+# 6) Carte
+# ============================================================
 default_center = [46.5191, 6.6336]
 if st.session_state["search_center"] is not None:
     center = list(st.session_state["search_center"])
@@ -200,10 +299,9 @@ else:
 
 m = folium.Map(location=center, zoom_start=zoom, tiles=basemap)
 
-# === Ma maison : Avenue des Collèges 29 (coordonnées fournies) ===
+# === Ma maison : Avenue des Collèges 29 ===
 HOUSE_LAT = 46.5105
 HOUSE_LON = 6.6528
-
 folium.Marker(
     location=[HOUSE_LAT, HOUSE_LON],
     tooltip="Ma maison",
@@ -238,22 +336,12 @@ PIN_SVG_TEMPLATE = """
 """.strip()
 
 def glyph_tree_white() -> str:
-    # Sapin joufflu, compact, avec étage du milieu élargi
     return """
-    <!-- étage haut -->
     <polygon points="18,8 12,13 24,13" fill="white"/>
-    <!-- étage milieu (plus large) -->
     <polygon points="18,11 11,16.5 25,16.5" fill="white"/>
-    <!-- étage bas -->
     <polygon points="18,14 11,21 25,21" fill="white"/>
-    <!-- tronc -->
     <rect x="16.2" y="21" width="3.6" height="5.5" rx="1.2" fill="white"/>
     """.strip()
-
-
-
-
-
 
 def glyph_mushroom_white() -> str:
     return """
@@ -268,7 +356,6 @@ def build_pin_svg(fill_color: str, glyph: str, w=36, h=48) -> str:
 def make_custom_pin(fill_color: str, for_mushroom: bool) -> CustomIcon:
     glyph = glyph_mushroom_white() if for_mushroom else glyph_tree_white()
     url = build_pin_svg(fill_color, glyph)
-    # même taille/ancre pour TOUT : identiques arbre/champignon
     return CustomIcon(icon_image=url, icon_size=(30, 42), icon_anchor=(15, 40))
 
 # --- Helpers pour les marqueurs ---
@@ -309,7 +396,6 @@ if st.session_state["search_center"] is not None:
 folium.LatLngPopup().add_to(m)
 MousePosition(position="topright", separator=" | ", empty_string="", num_digits=6, prefix="📍").add_to(m)
 
-# ------------------ Légende repliable ------------------
 # ------------------ Légende repliable (sans JS) ------------------
 def legend_pin_dataurl(name: str) -> str:
     col = colors.get(name, "green")
@@ -338,9 +424,7 @@ legend_html = f"""
     cursor: pointer;
     font-weight: 600;
   }}
-  /* masque le chevron par défaut (Chrome/Safari) */
   #legend-card summary::-webkit-details-marker {{ display: none; }}
-  /* petit chevron custom */
   #legend-card summary::after {{
     content: "▸";
     margin-left: 8px;
@@ -364,14 +448,14 @@ legend_html = f"""
   </details>
 </div>
 """
-
 m.get_root().html.add_child(folium.Element(legend_html))
 
 # Affichage
 st_folium(m, width=900, height=520)
 
-# ------------------ Ajout (menu déroulant) ------------------
-# ------------------ Ajouter / Supprimer un point ------------------
+# ============================================================
+# 7) Ajouter / Supprimer un point (UI)
+# ============================================================
 st.sidebar.markdown("---")
 st.sidebar.subheader("➕/➖ Ajouter ou supprimer un point")
 
@@ -382,7 +466,6 @@ mode = st.sidebar.radio(
     horizontal=True,
     label_visibility="collapsed"
 )
-
 
 with st.sidebar.form("add_or_delete_form"):
     if mode == "Ajouter":
@@ -396,49 +479,50 @@ with st.sidebar.form("add_or_delete_form"):
 
         submitted_add = st.form_submit_button("Ajouter & enregistrer")
         if submitted_add:
-            st.session_state["trees"].append({
-                "name": new_name,
-                "lat": float(new_lat),
-                "lon": float(new_lon),
-                "seasons": new_seasons or [],
-            })
-            # couleur par défaut si nouvelle catégorie
-            if new_name not in colors:
-                colors[new_name] = "green"
-            save_items(st.session_state["trees"])
-            st.success(f"Ajouté : {new_name} ✅ (enregistré)")
+            try:
+                add_item(new_name, float(new_lat), float(new_lon), new_seasons or [])
+                # couleur par défaut si nouvelle catégorie
+                if new_name not in colors:
+                    colors[new_name] = "green"
+                st.session_state["trees"] = load_items()
+                st.success(f"Ajouté : {new_name} ✅ (persisté)")
+            except Exception as e:
+                st.error(f"Erreur lors de l'ajout : {e}")
 
     else:  # mode == "Supprimer"
         trees = st.session_state.get("trees", [])
         if not trees:
             st.info("Aucun point à supprimer.")
-            # bouton inactif pour garder un seul submit dans le form
             _ = st.form_submit_button("Supprimer définitivement", disabled=True)
         else:
-            # Libellés lisibles
             options_labels = []
+            idx_to_id = {}
             for i, t in enumerate(trees):
                 seasons_txt = _serialize_seasons(t.get("seasons", [])) or "—"
-                options_labels.append(f"{i+1}. {t['name']} – {t['lat']:.5f}, {t['lon']:.5f} [{seasons_txt}]")
+                label = f"{i+1}. {t['name']} – {t['lat']:.5f}, {t['lon']:.5f} [{seasons_txt}]"
+                options_labels.append(label)
+                idx_to_id[i] = t["id"]
 
-            idx_to_label = {i: label for i, label in enumerate(options_labels)}
             idx_choice = st.selectbox(
                 "Choisis le point à supprimer",
-                options=list(idx_to_label.keys()),
-                format_func=lambda i: idx_to_label[i],
+                options=list(idx_to_id.keys()),
+                format_func=lambda i: options_labels[i],
             )
 
             confirm = st.checkbox("Je confirme la suppression", value=False)
             submitted_del = st.form_submit_button("Supprimer définitivement", disabled=not confirm)
 
             if submitted_del and confirm:
-                removed = st.session_state["trees"].pop(idx_choice)
-                save_items(st.session_state["trees"])
-                st.success(f"Supprimé : {removed['name']} ✅")
+                try:
+                    soft_delete_item(idx_to_id[idx_choice])
+                    st.session_state["trees"] = load_items()
+                    st.success("Point supprimé (soft delete) ✅")
+                except Exception as e:
+                    st.error(f"Erreur lors de la suppression : {e}")
 
-
-
-# ------------------ Stats & export ------------------
+# ============================================================
+# 8) Stats & export
+# ============================================================
 counts = Counter(t["name"] for t in filtered)
 total = len(filtered)
 st.markdown("**📊 Statistiques (points affichés)**")
@@ -449,16 +533,11 @@ else:
     st.markdown("\n".join(f"- {k} : **{counts[k]}**" for k in sorted(counts)))
 
 st.markdown("---")
-df_export = pd.DataFrame([{
-    "name": t["name"],
-    "lat": t["lat"],
-    "lon": t["lon"],
-    "seasons": _serialize_seasons(t.get("seasons", [])),
-} for t in st.session_state["trees"]])
-
+_df_full = _read_df()
+_df_export = _df_full[_df_full["is_deleted"] != "1"][["name","lat","lon","seasons"]].copy()
 st.download_button(
     "⬇️ Télécharger tous les points (CSV)",
-    data=df_export.to_csv(index=False),
+    data=_df_export.to_csv(index=False),
     file_name="arbres_lausanne.csv",
     mime="text/csv",
 )
