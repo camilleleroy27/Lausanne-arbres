@@ -27,11 +27,16 @@ st.set_page_config(
     layout="wide",
 )
 
-# Titre normal (desktop). Sur mobile, on affiche une barre fixe plus lisible.
-st.title("Carte des arbres fruitiers & champignons à Lausanne")
-
 # ====== Mode mobile / compact (UI responsive légère) ======
-MOBILE_COMPACT = st.sidebar.toggle("📱 Mode compact (mobile)", value=True, help="Optimise l'affichage sur petit écran.")
+MOBILE_COMPACT = st.sidebar.toggle(
+    "📱 Mode compact (mobile)", 
+    value=True, 
+    help="Optimise l'affichage sur petit écran."
+)
+
+# Titre uniquement sur desktop
+if not MOBILE_COMPACT:
+    st.title("Carte des arbres fruitiers & champignons à Lausanne")
 
 # =========================================
 # CSS responsive + barre de titre 100% mobile
