@@ -29,8 +29,8 @@ st.set_page_config(
 
 # ====== Mode mobile / compact (UI responsive légère) ======
 MOBILE_COMPACT = st.sidebar.toggle(
-    "📱 Mode compact (mobile)", 
-    value=True, 
+    "📱 Mode compact (mobile)",
+    value=True,
     help="Optimise l'affichage sur petit écran."
 )
 
@@ -39,160 +39,82 @@ if not MOBILE_COMPACT:
     st.title("Carte des arbres fruitiers & champignons à Lausanne")
 
 # =========================================
-# CSS responsive + barre de titre 100% mobile
+# CSS responsive + appbar mobile
 # =========================================
-*** a/app.py
---- b/app.py
-@@
- mobile_css = f"""
- <style>
- /*******************************
-  * 1) Gabarit généraux
-  *******************************/
- /* Réduit les marges globales sur mobile et évite les débordements horizontaux */
--@media (max-width: 640px){
--  .block-container { padding: 0.6rem 0.7rem !important; }
--  [data-testid="stHorizontalBlock"] { overflow: visible !important; }
--}
--
--/* Sidebar un peu plus large sur mobile, avec z-index élevé pour passer au-dessus des overlays */
--@media (max-width: 640px){
--  .stSidebar { width: 84vw !important; z-index: 10000 !important; }
--}
-+@media (max-width: 640px){
-+  .block-container { padding: 0.6rem 0.7rem !important; }
-+  [data-testid="stHorizontalBlock"] { overflow: visible !important; }
-+  /* Sidebar un peu plus large sur mobile, au-dessus des overlays */
-+  .stSidebar { width: 84vw !important; z-index: 10000 !important; }
-+}
- 
- /*******************************
-  * 2) Barre de titre collante (mobile)
-  *******************************/
- @media (max-width: 640px){
-   /* On masque le H1 Streamlit pour éviter un double-titre et gagner de la place */
--  .block-container h1 { display: none; }
--
--  /* Barre fixe en haut de l'écran */
--  #appbar-mobile {
--    position: sticky; /* reste visible même quand on scrolle */
--    top: 0;
--    background: #ffffffee;
--    backdrop-filter: saturate(1.2) blur(6px);
--    border-bottom: 1px solid rgba(0,0,0,0.08);
--    padding: 10px 12px;
--    z-index: 9998;
--  }
--  #appbar-mobile h1 {
--    margin: 0;
--    font-size: 18px;
--    line-height: 1.25;
--  }
-+  .block-container h1 { display: none; }
-+
-+  /* Appbar façon Google Maps : ne couvre pas le coin haut-gauche (>>), ne capture pas tous les clics */
-+  #appbar-mobile {
-+    position: sticky;
-+    top: 0;
-+    margin-left: 56px;                 /* laisse la zone du bouton >> cliquable */
-+    max-width: calc(100% - 64px);
-+    z-index: 900;                      /* sous les contrôles Streamlit (>> reste au-dessus) */
-+    pointer-events: none;              /* ne bloque pas les interactions derrière */
-+  }
-+  #appbar-mobile .appbar-inner {
-+    display: flex;
-+    gap: 10px;
-+    align-items: center;
-+    background: #ffffffee;
-+    backdrop-filter: saturate(1.2) blur(6px);
-+    border: 1px solid rgba(0,0,0,0.08);
-+    box-shadow: 0 2px 10px rgba(0,0,0,.10);
-+    border-radius: 14px;
-+    padding: 8px 12px;
-+    pointer-events: auto;              /* les éléments internes redeviennent cliquables */
-+  }
-+  #appbar-mobile h1 {
-+    margin: 0;
-+    font-size: 16px;
-+    line-height: 1.25;
-+    white-space: nowrap;
-+    overflow: hidden;
-+    text-overflow: ellipsis;
-+  }
-+  #appbar-mobile .hint {
-+    font-size: 12.5px;
-+    opacity: .75;
-+  }
- }
- 
- /*******************************
-  * 3) Légende plus compacte
-  *******************************/
-@@
- st.markdown(mobile_css, unsafe_allow_html=True)
- 
- # Barre d'app (mobile). Sur desktop, on garde le H1 standard.
- if MOBILE_COMPACT:
--    st.markdown(
--        """
--        <div id="appbar-mobile">
--          <h1>Carte des arbres fruitiers & champignons à Lausanne</h1>
--          <div style="font-size:12.5px; opacity:.75">Astuce : replie la barre latérale via ☰ pour profiter de toute la largeur.</div>
--        </div>
--        """,
--        unsafe_allow_html=True,
--    )
-+    st.markdown(
-+        """
-+        <div id="appbar-mobile">
-+          <div class="appbar-inner">
-+            <h1>Carte des arbres fruitiers &amp; champignons à Lausanne</h1>
-+            <div class="hint">Astuce : replie la barre latérale via ☰</div>
-+          </div>
-+        </div>
-+        """,
-+        unsafe_allow_html=True,
-+    )
-@@
--# ====== NOUVEAU : Titre flottant dans la carte (visibilité garantie sur mobile) ======
--map_title_html = f"""
--<div style=\"position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 9990;\">
--  <div style=\"background: #ffffffee; border: 1px solid rgba(0,0,0,.1); border-radius: 10px; padding: 6px 10px; box-shadow: 0 2px 8px rgba(0,0,0,.12); font-size: 13.5px;\">
--    🌳 Carte des arbres & champignons – Lausanne
--  </div>
--</div>
--"""
--m.get_root().html.add_child(folium.Element(map_title_html))
-+## Titre flottant sur la carte (mobile uniquement), positionné sous l'appbar
-+if MOBILE_COMPACT:
-+    map_title_html = """
-+    <div style="position: fixed; top: 58px; left: 50%; transform: translateX(-50%); z-index: 850;">
-+      <div style="background: #ffffffee; border: 1px solid rgba(0,0,0,.1); border-radius: 12px; padding: 6px 10px; box-shadow: 0 2px 8px rgba(0,0,0,.12); font-size: 13px;">
-+        🌳 Carte des arbres &amp; champignons – Lausanne
-+      </div>
-+    </div>
-+    """
-+    m.get_root().html.add_child(folium.Element(map_title_html))
+mobile_css = f"""
+<style>
+/* ======== 1) Gabarits généraux ======== */
+@media (max-width: 640px){{
+  .block-container {{ padding: 0.6rem 0.7rem !important; }}
+  [data-testid="stHorizontalBlock"] {{ overflow: visible !important; }}
+  /* Sidebar un peu plus large sur mobile, au-dessus des overlays */
+  .stSidebar {{ width: 84vw !important; z-index: 10000 !important; }}
+}}
 
-/*******************************
- * 4) Boutons/inputs plus "touch-friendly"
- *******************************/
+/* ======== 2) Appbar mobile façon Google Maps ======== */
+/* Idée : ne pas couvrir le coin haut-gauche pour laisser le bouton >> cliquable */
+@media (max-width: 640px){{
+  /* on masque le H1 streamlit seulement sur mobile, le desktop reste inchangé */
+  .block-container h1 {{ display: none; }}
+
+  #appbar-mobile {{
+    position: sticky;
+    top: 0;
+    margin-left: 56px;                 /* laisse la zone du bouton >> cliquable */
+    max-width: calc(100% - 64px);
+    z-index: 900;                      /* sous les contrôles Streamlit (>> reste au-dessus) */
+    pointer-events: none;              /* ne bloque pas les interactions derrière */
+  }}
+  #appbar-mobile .appbar-inner {{
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    background: #ffffffee;
+    backdrop-filter: saturate(1.2) blur(6px);
+    border: 1px solid rgba(0,0,0,0.08);
+    box-shadow: 0 2px 10px rgba(0,0,0,.10);
+    border-radius: 14px;
+    padding: 8px 12px;
+    pointer-events: auto;              /* les éléments internes redeviennent cliquables */
+  }}
+  #appbar-mobile h1 {{
+    margin: 0;
+    font-size: 16px;
+    line-height: 1.25;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }}
+  #appbar-mobile .hint {{
+    font-size: 12.5px;
+    opacity: .75;
+  }}
+}}
+
+/* ======== 3) Légende plus compacte ======== */
+@media (max-width: 640px){{
+  #legend-card {{ left: 12px !important; bottom: 12px !important; }}
+  #legend-card details {{ font-size: 12px !important; max-width: 180px !important; }}
+}}
+
+/* ======== 4) Contrôles touch-friendly ======== */
 @media (max-width: 640px){{
   button, .stButton>button {{ padding: .55rem .9rem !important; font-size: 0.98rem !important; }}
   .stSelectbox, .stTextInput, .stNumberInput {{ font-size: .98rem !important; }}
 }}
 </style>
 """
-
 st.markdown(mobile_css, unsafe_allow_html=True)
 
-# Barre d'app (mobile). Sur desktop, on garde le H1 standard.
+# Appbar mobile
 if MOBILE_COMPACT:
     st.markdown(
         """
         <div id="appbar-mobile">
-          <h1>Carte des arbres fruitiers & champignons à Lausanne</h1>
-          <div style="font-size:12.5px; opacity:.75">Astuce : replie la barre latérale via ☰ pour profiter de toute la largeur.</div>
+          <div class="appbar-inner">
+            <h1>Carte des arbres fruitiers &amp; champignons à Lausanne</h1>
+            <div class="hint">Astuce : replie la barre latérale via ☰</div>
+          </div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -755,7 +677,6 @@ folium.LatLngPopup().add_to(m)
 MousePosition(position="topright", separator=" | ", empty_string="", num_digits=6, prefix="📍").add_to(m)
 
 # Légende repliable
-
 def legend_pin_dataurl(name: str) -> str:
     col = colors.get(name, "green")
     if name in MUSHROOM_SET:
@@ -763,23 +684,20 @@ def legend_pin_dataurl(name: str) -> str:
     else:
         return build_pin_svg(col, glyph_tree_white(), w=18, h=24)
 
-
 legend_rows = []
 for name in sorted(set(CATALOG)):
     img = legend_pin_dataurl(name)
     legend_rows.append(
         f"""
-        <div style=\"display:flex; align-items:center; gap:8px; margin:4px 0;\">
-          <img src=\"{img}\" width=\"16\" height=\"16\" />
+        <div style="display:flex; align-items:center; gap:8px; margin:4px 0;">
+          <img src="{img}" width="16" height="16" />
           <span>{name}</span>
         </div>
-    """
+        """
     )
 legend_body = "".join(legend_rows)
 
-# place ceci AVANT de construire legend_html
 legend_open_attr = "open" if not MOBILE_COMPACT else ""
-
 legend_html = f"""
 <style>
   #legend-card summary {{ list-style: none; cursor: pointer; font-weight: 600; }}
@@ -787,31 +705,31 @@ legend_html = f"""
   #legend-card summary::after {{ content: "▸"; margin-left: 8px; font-size: 12px; opacity: .6; }}
   #legend-card details[open] summary::after {{ content: "▾"; }}
 </style>
-<div id=\"legend-card\" style=\"position: fixed; bottom: 24px; left: 24px; z-index: 9999;\">
-  <details {legend_open_attr} style=\"background:#fff;border:1px solid #ccc;border-radius:10px;padding:8px 10px;box-shadow:0 2px 10px rgba(0,0,0,0.15);max-width:240px;font-size:13px;\">
+<div id="legend-card" style="position: fixed; bottom: 24px; left: 24px; z-index: 9999;">
+  <details {legend_open_attr} style="background:#fff;border:1px solid #ccc;border-radius:10px;padding:8px 10px;box-shadow:0 2px 10px rgba(0,0,0,0.15);max-width:240px;font-size:13px;">
     <summary>📖 Légende</summary>
-    <div style=\"margin-top: 8px; max-height: 240px; overflow: auto;\">{legend_body}</div>
+    <div style="margin-top: 8px; max-height: 240px; overflow: auto;">{legend_body}</div>
   </details>
 </div>
 """
-
 m.get_root().html.add_child(folium.Element(legend_html))
 
-# ====== NOUVEAU : Titre flottant dans la carte (visibilité garantie sur mobile) ======
-map_title_html = f"""
-<div style=\"position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 9990;\">
-  <div style=\"background: #ffffffee; border: 1px solid rgba(0,0,0,.1); border-radius: 10px; padding: 6px 10px; box-shadow: 0 2px 8px rgba(0,0,0,.12); font-size: 13.5px;\">
-    🌳 Carte des arbres & champignons – Lausanne
-  </div>
-</div>
-"""
-m.get_root().html.add_child(folium.Element(map_title_html))
+# ====== Titre flottant dans la carte (mobile uniquement), sous l'appbar ======
+if MOBILE_COMPACT:
+    map_title_html = """
+    <div style="position: fixed; top: 58px; left: 50%; transform: translateX(-50%); z-index: 850;">
+      <div style="background: #ffffffee; border: 1px solid rgba(0,0,0,.1); border-radius: 12px; padding: 6px 10px; box-shadow: 0 2px 8px rgba(0,0,0,.12); font-size: 13px;">
+        🌳 Carte des arbres &amp; champignons – Lausanne
+      </div>
+    </div>
+    """
+    m.get_root().html.add_child(folium.Element(map_title_html))
 
 # Affichage carte
 st_folium(m, width=None, height=MAP_HEIGHT)
 
 # ============================================================
-# 7) Stats & export
+# 7) Statistiques & export
 # ============================================================
 with st.expander("📊 Statistiques & export", expanded=not MOBILE_COMPACT):
     counts = Counter(t["name"] for t in filtered)
@@ -828,7 +746,7 @@ with st.expander("📊 Statistiques & export", expanded=not MOBILE_COMPACT):
     if "is_deleted" not in _df_full.columns:
         _df_full["is_deleted"] = "0"
     _df_full["is_deleted"] = _normalize_is_deleted(_df_full["is_deleted"])
-    _df_export = _df_full[_df_full["is_deleted"] != "1"][ ["name", "lat", "lon", "seasons"] ].copy()
+    _df_export = _df_full[_df_full["is_deleted"] != "1"][["name", "lat", "lon", "seasons"]].copy()
     st.download_button(
         "⬇️ Télécharger tous les points (CSV)",
         data=_df_export.to_csv(index=False),
