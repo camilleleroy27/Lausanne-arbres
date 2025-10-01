@@ -340,4 +340,217 @@ folium.Marker(
     tooltip="Ma maison",
     popup="⛪️ Ma maison — Avenue des Collèges 29",
     icon=folium.DivIcon(html="""
-        <div style="font-size:40px; line-height:40px; transform: translate(
+        <div style="font-size:40px; line-height:40px; transform: translate(-18px, -32px);">⛪️</div>
+    """),
+).add_to(m)
+
+cluster = MarkerCluster().add_to(m)
+
+# ---------- Icônes SVG personnalisées ----------
+PIN_SVG_TEMPLATE = """
+<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 36 48">
+  <ellipse cx="18" cy="46" rx="7" ry="2.5" fill="rgba(0,0,0,0.25)"/>
+  <path d="M18 0 C 8 0, 1 7.5, 1 17 C 1 26.5, 9 31.5, 13 37.5
+           C 15 40.5, 16.5 44, 18 48 C 19.5 44, 21 40.5, 23 37.5
+           C 27 31.5, 35 26.5, 35 17 C 35 7.5, 28 0, 18 0 Z"
+        fill="{FILL}" stroke="rgba(0,0,0,0.35)" stroke-width="1"/>
+  <circle cx="18" cy="17" r="9" fill="rgba(255,255,255,0.12)"/>
+  {GLYPH}
+</svg>
+""".strip()
+
+def glyph_tree_white() -> str:
+    return """
+    <polygon points="18,8 12,13 24,13" fill="white"/>
+    <polygon points="18,11 11,16.5 25,16.5" fill="white"/>
+    <polygon points="18,14 11,21 25,21" fill="white"/>
+    <rect x="16.2" y="21" width="3.6" height="5.5" rx="1.2" fill="white"/>
+    """.strip()
+
+def glyph_mushroom_white() -> str:
+    return """
+    <path d="M9,18 C9,13 13,10 18,10 C23,10 27,13 27,18 L9,18 Z" fill="white"/>
+    <rect x="15.5" y="18" width="5" height="7" rx="2" fill="white"/>
+    """.strip()
+
+def build_pin_svg(fill_color: str, glyph: str, w=36, h=48) -> str:
+    svg = PIN_SVG_TEMPLATE.format(W=w, H=h, FILL=fill_color, GLYPH=glyph)
+    return "data:image/svg+xml;charset=UTF-8," + urllib.parse.quote(svg)
+
+def make_custom_pin(fill_color: str, for_mushroom: bool) -> CustomIcon:
+    glyph = glyph_mushroom_white() if for_mushroom else glyph_tree_white()
+    url = build_pin_svg(fill_color, glyph)
+    return CustomIcon(icon_image=url, icon_size=(30, 42), icon_anchor=(15, 40))
+
+# ---------- Création des marqueurs ----------
+def add_tree_marker(tree):
+    fill = colors.get(tree["name"], "green")
+    if use_simple_icons:
+        # Icône folium simple (stable)
+        folium.Marker(
+            location=[tree["lat"], tree["lon"]],
+            popup=f"{tree['name']}",
+            icon=folium.Icon(color="green", icon="info-sign"),
+        ).add_to(cluster)
+    else:
+        # Icône SVG personnalisée
+        folium.Marker(
+            location=[tree["lat"], tree["lon"]],
+            popup=f"{tree['name']}",
+            icon=make_custom_pin(fill, for_mushroom=False),
+        ).add_to(cluster)
+
+def add_mushroom_marker(tree):
+    fill = colors.get(tree["name"], "gray")
+    if use_simple_icons:
+        # Icône folium simple (stable)
+        folium.Marker(
+            location=[tree["lat"], tree["lon"]],
+            popup=f"{tree['name']}",
+            icon=folium.Icon(color="orange", icon="info-sign"),
+        ).add_to(cluster)
+    else:
+        # Icône SVG personnalisée
+        folium.Marker(
+            location=[tree["lat"], tree["lon"]],
+            popup=f"{tree['name']}",
+            icon=make_custom_pin(fill, for_mushroom=True),
+        ).add_to(cluster)
+
+for t in filtered:
+    if t["name"] in MUSHROOM_SET:
+        add_mushroom_marker(t)
+    else:
+        add_tree_marker(t)
+
+# Repère de recherche
+if st.session_state["search_center"] is not None:
+    folium.Marker(
+        location=center,
+        tooltip=st.session_state["search_label"] or "Résultat de recherche",
+        popup=st.session_state["search_label"] or "Résultat de recherche",
+        icon=folium.Icon(color="blue", icon="info-sign"),
+    ).add_to(m)
+    folium.Circle(location=center, radius=35, color="blue", fill=True, fill_opacity=0.15).add_to(m)
+
+# Outils lat/lon
+folium.LatLngPopup().add_to(m)
+MousePosition(position="topright", separator=" | ", empty_string="", num_digits=6, prefix="📍").add_to(m)
+
+# Légende repliable
+def legend_pin_dataurl(name: str) -> str:
+    col = colors.get(name, "green")
+    if name in MUSHROOM_SET:
+        return build_pin_svg(col, glyph_mushroom_white(), w=18, h=24)
+    else:
+        return build_pin_svg(col, glyph_tree_white(), w=18, h=24)
+
+legend_rows = []
+for name in sorted(set(CATALOG)):
+    img = legend_pin_dataurl(name)
+    legend_rows.append(f"""
+        <div style="display:flex; align-items:center; gap:8px; margin:4px 0;">
+          <img src="{img}" width="16" height="16" />
+          <span>{name}</span>
+        </div>
+    """)
+legend_body = "".join(legend_rows)
+
+legend_html = f"""
+<style>
+  #legend-card summary {{ list-style: none; cursor: pointer; font-weight: 600; }}
+  #legend-card summary::-webkit-details-marker {{ display: none; }}
+  #legend-card summary::after {{ content: "▸"; margin-left: 8px; font-size: 12px; opacity: .6; }}
+  #legend-card details[open] summary::after {{ content: "▾"; }}
+</style>
+<div id="legend-card" style="position: fixed; bottom: 24px; left: 24px; z-index: 9999;">
+  <details style="background:#fff;border:1px solid #ccc;border-radius:10px;padding:8px 10px;box-shadow:0 2px 10px rgba(0,0,0,0.15);max-width:240px;font-size:13px;">
+    <summary>📖 Légende</summary>
+    <div style="margin-top: 8px; max-height: 240px; overflow: auto;">{legend_body}</div>
+  </details>
+</div>
+"""
+m.get_root().html.add_child(folium.Element(legend_html))
+
+# Affichage carte
+st_folium(m, width=900, height=520)
+
+# ============================================================
+# 7) Ajouter / Supprimer un point (UI)
+# ============================================================
+st.sidebar.subheader("➕/➖ Ajouter ou supprimer un point")
+mode = st.sidebar.radio("Choisir mode", ["Ajouter", "Supprimer"], index=0, horizontal=True, label_visibility="collapsed")
+
+with st.sidebar.form("add_or_delete_form"):
+    if mode == "Ajouter":
+        new_name = st.selectbox("Catégorie", options=sorted(set(CATALOG + [t["name"] for t in st.session_state["trees"]])), index=0)
+        col_a, col_b = st.columns(2)
+        with col_a:
+            new_lat = st.number_input("Latitude", value=46.519100, format="%.6f")
+        with col_b:
+            new_lon = st.number_input("Longitude", value=6.633600, format="%.6f")
+        all_seasons = ["printemps", "été", "automne", "hiver"]
+        new_seasons = st.multiselect("Saison(s)", options=all_seasons, default=["automne"])
+
+        submitted_add = st.form_submit_button("Ajouter & enregistrer")
+        if submitted_add:
+            try:
+                add_item(new_name, float(new_lat), float(new_lon), new_seasons or [])
+                if new_name not in colors:
+                    colors[new_name] = "green"
+                st.session_state["trees"] = load_items()
+                st.success(f"Ajouté : {new_name} ✅ (persisté)")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Erreur lors de l'ajout : {e}")
+
+    else:
+        trees = st.session_state.get("trees", [])
+        if not trees:
+            st.info("Aucun point à supprimer.")
+            _ = st.form_submit_button("Supprimer définitivement", disabled=True)
+        else:
+            options_labels, idx_to_id = [], {}
+            for i, t in enumerate(trees):
+                seasons_txt = _serialize_seasons(t.get("seasons", [])) or "—"
+                options_labels.append(f"{i+1}. {t['name']} – {t['lat']:.5f}, {t['lon']:.5f} [{seasons_txt}]")
+                idx_to_id[i] = t["id"]
+
+            idx_choice = st.selectbox("Choisis le point à supprimer", options=list(idx_to_id.keys()), format_func=lambda i: options_labels[i])
+            confirm = st.checkbox("Je confirme la suppression", value=False)
+            submitted_del = st.form_submit_button("Supprimer définitivement", disabled=not confirm)
+
+            if submitted_del and confirm:
+                try:
+                    soft_delete_item(idx_to_id[idx_choice])
+                    st.session_state["trees"] = load_items()
+                    st.success("Point supprimé (soft delete) ✅")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erreur lors de la suppression : {e}")
+
+# ============================================================
+# 8) Stats & export
+# ============================================================
+counts = Counter(t["name"] for t in filtered)
+total = len(filtered)
+st.markdown("**📊 Statistiques (points affichés)**")
+if total == 0:
+    st.write("Aucun point (vérifie les filtres).")
+else:
+    st.write(f"Total : **{total}**")
+    st.markdown("\n".join(f"- {k} : **{counts[k]}**" for k in sorted(counts)))
+
+st.markdown("---")
+_df_full = _read_df()
+cols_wanted = ["name","lat","lon","seasons"]
+cols_present = [c for c in cols_wanted if c in _df_full.columns]
+mask = (_df_full["is_deleted"].astype(str) != "1") if "is_deleted" in _df_full.columns else True
+_df_export = _df_full[mask][cols_present].copy()
+st.download_button(
+    "⬇️ Télécharger tous les points (CSV)",
+    data=_df_export.to_csv(index=False),
+    file_name="arbres_lausanne.csv",
+    mime="text/csv",
+)
+st.caption(f"🌳 Points affichés : {len(filtered)} / {len(st.session_state['trees'])}")
