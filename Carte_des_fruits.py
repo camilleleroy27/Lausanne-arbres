@@ -40,10 +40,10 @@ if missing:
         "Configuration manquante pour le stockage persistant : "
         + ", ".join(missing)
         + ".\n\n"
-        "👉 Mets dans Paramètres → Secrets :\n"
+        "👉 Paramètres → Secrets :\n"
         "- [gcp_service_account] (bloc TOML avec la clé JSON)\n"
         "- gsheets_spreadsheet_url (à la racine **ou** dans le bloc gcp_service_account)\n"
-        "Optionnel : gsheets_worksheet_name (à la racine ou dans gcp_service_account ; défaut 'points')"
+        "Optionnel : gsheets_worksheet_name (défaut 'points')"
     )
     st.stop()
 
@@ -58,6 +58,12 @@ def _parse_seasons(s):
     if pd.isna(s) or not str(s).strip():
         return []
     return [x.strip() for x in str(s).split("|")]
+
+def _to_float(x):
+    """Convertit '46,5191' ou '46.5191' (avec espaces fines) en float."""
+    s = str(x).strip().replace("\u202f", "").replace(" ", "")
+    s = s.replace(",", ".")
+    return float(s)
 
 def _now_iso():
     return datetime.utcnow().isoformat(timespec="seconds") + "Z"
@@ -74,14 +80,11 @@ def _gsheets_open():
     creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
     gc = gspread.authorize(creds)
 
-    # ✅ Lis l'URL et le nom d’onglet soit à la racine, soit (si jamais) dans le bloc gcp_service_account
+    # ✅ URL/onglet à la racine OU dans gcp_service_account
     url = st.secrets.get("gsheets_spreadsheet_url") or st.secrets["gcp_service_account"].get("gsheets_spreadsheet_url")
     ws_name = st.secrets.get("gsheets_worksheet_name") or st.secrets["gcp_service_account"].get("gsheets_worksheet_name", "points")
 
-    # Ouvre par URL complète ou par ID pur
     sh = gc.open_by_url(url) if str(url).startswith(("http://", "https://")) else gc.open_by_key(url)
-
-    # Onglet
     try:
         ws = sh.worksheet(ws_name)
     except Exception:
@@ -113,14 +116,14 @@ def load_items():
     items = []
     for _, row in df.iterrows():
         try:
-            lat = float(row["lat"])
-            lon = float(row["lon"])
+            lat = _to_float(row["lat"])
+            lon = _to_float(row["lon"])
         except Exception:
             # ignore lignes invalides
             continue
         items.append({
-            "id": str(row["id"]),
-            "name": row["name"],
+            "id": str(row.get("id", "")),
+            "name": row.get("name", ""),
             "lat": lat,
             "lon": lon,
             "seasons": _parse_seasons(row.get("seasons", "")),
@@ -139,7 +142,8 @@ def add_item(name: str, lat: float, lon: float, seasons: list):
         "0",           # is_deleted
         _now_iso(),    # updated_at
     ]
-    ws.append_row(row, value_input_option="USER_ENTERED")
+    # ✅ RAW pour éviter que Sheets remette des virgules via la locale
+    ws.append_row(row, value_input_option="RAW")
     _invalidate_cache()
 
 def soft_delete_item(item_id: str):
@@ -233,7 +237,7 @@ with st.sidebar.form("add_or_delete_form"):
                     colors[new_name] = "green"
                 st.session_state["trees"] = load_items()
                 st.success(f"Ajouté : {new_name} ✅ (persisté)")
-                st.rerun()  # 🔁 reconstruit la carte avec les données à jour
+                st.rerun()  # 🔁 reconstruit la carte à jour
             except Exception as e:
                 st.error(f"Erreur lors de l'ajout : {e}")
 
@@ -258,7 +262,7 @@ with st.sidebar.form("add_or_delete_form"):
                     soft_delete_item(idx_to_id[idx_choice])
                     st.session_state["trees"] = load_items()
                     st.success("Point supprimé (soft delete) ✅")
-                    st.rerun()  # 🔁 reconstruit la carte
+                    st.rerun()
                 except Exception as e:
                     st.error(f"Erreur lors de la suppression : {e}")
 
@@ -292,14 +296,10 @@ def geocode_address_biased(q: str, commune: str) -> Tuple[Optional[float], Optio
         return None, None, None
     geolocator = Nominatim(user_agent="carte_arbres_lausanne_app")
     geocode = RateLimiter(geolocator.geocode, min_delay_seconds=1, swallow_exceptions=True)
-    trials = [q]
-    trials = [
-        f"{q}, {commune}, Vaud, Switzerland" if commune and not commune.startswith("Auto") else q,
-        f"{q}, Lausanne District, Vaud, Switzerland",
-        f"{q}, Vaud, Switzerland",
-        f"{q}, Switzerland",
-        q,
-    ]
+    trials = []
+    if commune and not commune.startswith("Auto"):
+        trials += [f"{q}, {commune}, Vaud, Switzerland", f"{q}, {commune}, Switzerland"]
+    trials += [f"{q}, Lausanne District, Vaud, Switzerland", f"{q}, Vaud, Switzerland", f"{q}, Switzerland", q]
     for query in trials:
         loc = geocode(query, country_codes="ch", viewbox=(BBOX_SW, BBOX_NE), bounded=False, addressdetails=True, exactly_one=True)
         if loc:
