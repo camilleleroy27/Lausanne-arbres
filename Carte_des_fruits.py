@@ -109,7 +109,23 @@ def _invalidate_cache():
 def load_items():
     """Retourne les items (non supprimés) comme liste de dicts."""
     df = _read_df()
-    df = df[df["is_deleted"].astype(str) != "1"].copy()
+
+    # Si la colonne n’existe pas → on la crée
+    if "is_deleted" not in df.columns:
+        df["is_deleted"] = "0"
+
+    # Uniformise en "0"/"1"
+    df["is_deleted"] = (
+        df["is_deleted"]
+          .astype(str).str.strip()
+          .str.replace(",", ".", regex=False)
+          .str.extract(r"(\d+)")   # garde uniquement les chiffres
+          .fillna("0")
+    )
+
+    # Ne garde que les lignes non supprimées
+    df = df[df["is_deleted"] != "1"].copy()
+
     items = []
     for _, row in df.iterrows():
         try:
