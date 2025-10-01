@@ -553,7 +553,7 @@ filtered = items
 if selected_types:
     filtered = [t for t in filtered if t["name"] in selected_types]
 if selected_seasons:
-    filtered = [t for t in filtered if any(s in selected_seasons for s in t["seasons")]
+    filtered = [t for t in filtered if any(s in selected_seasons for s in t["seasons"])]
 
 # ============================================================
 # 6) Carte
