@@ -9,7 +9,6 @@ from typing import Optional, Tuple
 import urllib.parse
 import uuid
 from datetime import datetime
-import math
 
 # --- géocodage (optionnel) ---
 try:
@@ -23,7 +22,7 @@ st.set_page_config(page_title="Arbres & champignons – Lausanne", layout="wide"
 st.title("Carte des arbres fruitiers & champignons à Lausanne")
 
 # ============================================================
-# 0) Garde-fou secrets (Google Sheets requis)
+# 0) Mode persistant OBLIGATOIRE (Google Sheets) + garde-fou tolérant
 # ============================================================
 has_gcp = "gcp_service_account" in st.secrets
 url_root = st.secrets.get("gsheets_spreadsheet_url")
@@ -41,17 +40,16 @@ if missing:
         "Configuration manquante pour le stockage persistant : "
         + ", ".join(missing)
         + ".\n\n"
-        "👉 Paramètres → Secrets :\n"
+        "👉 Mets dans Paramètres → Secrets :\n"
         "- [gcp_service_account] (bloc TOML avec la clé JSON)\n"
         "- gsheets_spreadsheet_url (à la racine **ou** dans le bloc gcp_service_account)\n"
-        "Optionnel : gsheets_worksheet_name (défaut 'points')"
+        "Optionnel : gsheets_worksheet_name (à la racine ou dans gcp_service_account ; défaut 'points')"
     )
     st.stop()
 
 # ============================================================
-# 1) Persistance Google Sheets (auto-fix entête + locale FR)
+# 1) Persistance (Google Sheets uniquement)
 # ============================================================
-EXPECTED_HEADER = ["id","name","lat","lon","seasons","is_deleted","updated_at"]
 
 def _serialize_seasons(lst):
     return "|".join(lst or [])
@@ -60,12 +58,6 @@ def _parse_seasons(s):
     if pd.isna(s) or not str(s).strip():
         return []
     return [x.strip() for x in str(s).split("|")]
-
-def _to_float(x):
-    """Accepte '46,5191' ou '46.5191' (et espaces fines)."""
-    s = str(x).strip().replace("\u202f", "").replace(" ", "")
-    s = s.replace(",", ".")
-    return float(s)
 
 def _now_iso():
     return datetime.utcnow().isoformat(timespec="seconds") + "Z"
@@ -82,97 +74,78 @@ def _gsheets_open():
     creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
     gc = gspread.authorize(creds)
 
+    # ✅ Lis l'URL et le nom d’onglet soit à la racine, soit (si jamais) dans le bloc gcp_service_account
     url = st.secrets.get("gsheets_spreadsheet_url") or st.secrets["gcp_service_account"].get("gsheets_spreadsheet_url")
     ws_name = st.secrets.get("gsheets_worksheet_name") or st.secrets["gcp_service_account"].get("gsheets_worksheet_name", "points")
 
+    # Ouvre par URL complète ou par ID pur
     sh = gc.open_by_url(url) if str(url).startswith(("http://", "https://")) else gc.open_by_key(url)
+
+    # Onglet
     try:
         ws = sh.worksheet(ws_name)
     except Exception:
         ws = sh.add_worksheet(title=ws_name, rows=1000, cols=10)
-        ws.update("A1:G1", [EXPECTED_HEADER])
+        ws.update("A1:G1", [["id", "name", "lat", "lon", "seasons", "is_deleted", "updated_at"]])
     return ws
-
-def _ensure_header(ws) -> None:
-    """Répare silencieusement l'entête si absente/cassée (pas de bouton nécessaire)."""
-    values = ws.get_all_values()
-    if not values:
-        ws.update("A1:G1", [EXPECTED_HEADER])
-        return
-    headers = values[0]
-    if not set(["id", "name", "lat", "lon"]).issubset(set(headers)):
-        ws.update("A1:G1", [EXPECTED_HEADER])
 
 @st.cache_data(ttl=10)
 def _read_df():
-    """Lit toutes les lignes depuis Google Sheets (auto-fix entête)."""
+    """Lit toutes les lignes depuis Google Sheets (avec cache court)."""
     ws = _gsheets_open()
-    _ensure_header(ws)
-
     rows = ws.get_all_records()
     if not rows:
-        df = pd.DataFrame(columns=EXPECTED_HEADER)
-    else:
-        df = pd.DataFrame(rows)
-
-    # Colonnes manquantes -> par défaut (par prudence)
-    for col in EXPECTED_HEADER:
-        if col not in df.columns:
-            df[col] = "" if col != "is_deleted" else "0"
-
-    # Normaliser
-    df["is_deleted"] = df["is_deleted"].astype(str).replace("", "0")
-
+        return pd.DataFrame(columns=["id","name","lat","lon","seasons","is_deleted","updated_at"])
+    df = pd.DataFrame(rows)
+    if "is_deleted" not in df.columns:
+        df["is_deleted"] = "0"
+    if "seasons" not in df.columns:
+        df["seasons"] = ""
     return df
 
 def _invalidate_cache():
     st.cache_data.clear()
 
 def load_items():
-    """Retourne les items (non supprimés) comme liste de dicts (lat/lon robustes)."""
+    """Retourne les items (non supprimés) comme liste de dicts."""
     df = _read_df()
-    if "is_deleted" in df.columns:
-        df = df[df["is_deleted"] != "1"].copy()
-
+    df = df[df["is_deleted"] != "1"].copy()
     items = []
     for _, row in df.iterrows():
         try:
-            lat = _to_float(row["lat"])
-            lon = _to_float(row["lon"])
-            if not (math.isfinite(lat) and math.isfinite(lon)):
-                continue
+            lat = float(row["lat"])
+            lon = float(row["lon"])
         except Exception:
-            continue  # ignore lignes invalides
+            # ignore lignes invalides
+            continue
         items.append({
-            "id": str(row.get("id", "")),
-            "name": str(row.get("name", "")),
-            "lat": float(lat),
-            "lon": float(lon),
+            "id": str(row["id"]),
+            "name": row["name"],
+            "lat": lat,
+            "lon": lon,
             "seasons": _parse_seasons(row.get("seasons", "")),
         })
     return items
 
 def add_item(name: str, lat: float, lon: float, seasons: list):
-    """Append d'un nouvel item (UUID) dans la feuille (RAW pour éviter la locale)."""
+    """Append d'un nouvel item (UUID) dans la feuille."""
     ws = _gsheets_open()
-    _ensure_header(ws)
     row = [
         str(uuid.uuid4()),
         name,
         float(lat),
         float(lon),
         _serialize_seasons(seasons or []),
-        "0",
-        _now_iso(),
+        "0",           # is_deleted
+        _now_iso(),    # updated_at
     ]
-    ws.append_row(row, value_input_option="RAW")
+    ws.append_row(row, value_input_option="USER_ENTERED")
     _invalidate_cache()
 
 def soft_delete_item(item_id: str):
     """Marque is_deleted=1 pour l'élément correspondant à item_id."""
     ws = _gsheets_open()
-    _ensure_header(ws)
-    values = ws.get_all_values()
+    values = ws.get_all_values()  # incluant l'entête
     if not values:
         return
     headers = values[0]
@@ -181,18 +154,22 @@ def soft_delete_item(item_id: str):
         isdel_col = headers.index("is_deleted")
         upd_col = headers.index("updated_at")
     except ValueError:
+        st.error("Colonnes attendues absentes dans la feuille (id / is_deleted / updated_at).")
         return
-    for r_idx in range(1, len(values)):  # 1 = sauter l'entête
+    for r_idx in range(1, len(values)):  # sauter l'entête
         if values[r_idx][id_col] == item_id:
-            ws.update_cell(r_idx+1, isdel_col+1, "1")
+            ws.update_cell(r_idx+1, isdel_col+1, "1")   # gspread est 1-indexed
             ws.update_cell(r_idx+1, upd_col+1, _now_iso())
             _invalidate_cache()
             return
+    st.warning("ID non trouvé ; rien supprimé.")
 
 # ============================================================
-# 2) État (session) — toujours resynchroniser à chaque run
+# 2) État (session)
 # ============================================================
-st.session_state["trees"] = load_items()
+if "trees" not in st.session_state:
+    st.session_state["trees"] = load_items()
+
 if "search_center" not in st.session_state:
     st.session_state["search_center"] = None
 if "search_label" not in st.session_state:
@@ -226,37 +203,70 @@ colors = {
 MUSHROOM_SET = {"Bolets", "Chanterelles", "Morilles"}
 
 # ============================================================
-# 4) Actions (mode test + debug + cluster)
+# 4) Actions & outils (placés AVANT filtrage + carte)
 # ============================================================
 st.sidebar.markdown("---")
-use_simple_icons = st.sidebar.checkbox("🧪 Icônes simples (CircleMarker)", value=True)
-use_cluster = st.sidebar.checkbox("🧪 Désactiver le clustering ?", value=True)
-
 if st.sidebar.button("🔄 Rafraîchir les données"):
     _invalidate_cache()
     st.session_state["trees"] = load_items()
     st.rerun()
 
-with st.sidebar.expander("🔍 Debug (temporaire)", expanded=False):
-    try:
-        _df = _read_df()
-        st.write("Lignes lues :", len(_df))
-        st.write("Colonnes :", list(_df.columns))
-        st.dataframe(_df.head(10))
-    except Exception as e:
-        st.error(f"Erreur lecture DF : {e}")
+st.sidebar.subheader("➕/➖ Ajouter ou supprimer un point")
+mode = st.sidebar.radio("Choisir mode", ["Ajouter", "Supprimer"], index=0, horizontal=True, label_visibility="collapsed")
 
-    # Aperçu des 3 premiers items interprétés
-    try:
-        items_dbg = st.session_state["trees"][:3]
-        st.write("3 premiers items interprétés :", items_dbg)
-    except Exception as e:
-        st.error(f"Erreur items : {e}")
+with st.sidebar.form("add_or_delete_form"):
+    if mode == "Ajouter":
+        new_name = st.selectbox("Catégorie", options=sorted(set(CATALOG + [t["name"] for t in st.session_state["trees"]])), index=0)
+        col_a, col_b = st.columns(2)
+        with col_a:
+            new_lat = st.number_input("Latitude", value=46.519100, format="%.6f")
+        with col_b:
+            new_lon = st.number_input("Longitude", value=6.633600, format="%.6f")
+        all_seasons = ["printemps", "été", "automne", "hiver"]
+        new_seasons = st.multiselect("Saison(s)", options=all_seasons, default=["automne"])
+
+        submitted_add = st.form_submit_button("Ajouter & enregistrer")
+        if submitted_add:
+            try:
+                add_item(new_name, float(new_lat), float(new_lon), new_seasons or [])
+                if new_name not in colors:
+                    colors[new_name] = "green"
+                st.session_state["trees"] = load_items()
+                st.success(f"Ajouté : {new_name} ✅ (persisté)")
+                st.rerun()  # 🔁 reconstruit la carte avec les données à jour
+            except Exception as e:
+                st.error(f"Erreur lors de l'ajout : {e}")
+
+    else:  # Supprimer
+        trees = st.session_state.get("trees", [])
+        if not trees:
+            st.info("Aucun point à supprimer.")
+            _ = st.form_submit_button("Supprimer définitivement", disabled=True)
+        else:
+            options_labels, idx_to_id = [], {}
+            for i, t in enumerate(trees):
+                seasons_txt = _serialize_seasons(t.get("seasons", [])) or "—"
+                options_labels.append(f"{i+1}. {t['name']} – {t['lat']:.5f}, {t['lon']:.5f} [{seasons_txt}]")
+                idx_to_id[i] = t["id"]
+
+            idx_choice = st.selectbox("Choisis le point à supprimer", options=list(idx_to_id.keys()), format_func=lambda i: options_labels[i])
+            confirm = st.checkbox("Je confirme la suppression", value=False)
+            submitted_del = st.form_submit_button("Supprimer définitivement", disabled=not confirm)
+
+            if submitted_del and confirm:
+                try:
+                    soft_delete_item(idx_to_id[idx_choice])
+                    st.session_state["trees"] = load_items()
+                    st.success("Point supprimé (soft delete) ✅")
+                    st.rerun()  # 🔁 reconstruit la carte
+                except Exception as e:
+                    st.error(f"Erreur lors de la suppression : {e}")
 
 # ============================================================
 # 5) Filtres + recherche
 # ============================================================
 st.sidebar.header("Filtres")
+
 basemap_label_to_tiles = {
     "CartoDB positron (clair)": "CartoDB positron",
     "OpenStreetMap": "OpenStreetMap",
@@ -282,10 +292,14 @@ def geocode_address_biased(q: str, commune: str) -> Tuple[Optional[float], Optio
         return None, None, None
     geolocator = Nominatim(user_agent="carte_arbres_lausanne_app")
     geocode = RateLimiter(geolocator.geocode, min_delay_seconds=1, swallow_exceptions=True)
-    trials = []
-    if commune and not commune.startswith("Auto"):
-        trials += [f"{q}, {commune}, Vaud, Switzerland", f"{q}, {commune}, Switzerland"]
-    trials += [f"{q}, Lausanne District, Vaud, Switzerland", f"{q}, Vaud, Switzerland", f"{q}, Switzerland", q]
+    trials = [q]
+    trials = [
+        f"{q}, {commune}, Vaud, Switzerland" if commune and not commune.startswith("Auto") else q,
+        f"{q}, Lausanne District, Vaud, Switzerland",
+        f"{q}, Vaud, Switzerland",
+        f"{q}, Switzerland",
+        q,
+    ]
     for query in trials:
         loc = geocode(query, country_codes="ch", viewbox=(BBOX_SW, BBOX_NE), bounded=False, addressdetails=True, exactly_one=True)
         if loc:
@@ -328,10 +342,6 @@ if selected_types:
 if selected_seasons:
     filtered = [t for t in filtered if any(s in selected_seasons for s in t["seasons"])]
 
-# Alerte si aucun point
-if len(items) == 0:
-    st.warning("Aucun point chargé depuis Google Sheets. Vérifie l’onglet (gsheets_worksheet_name), l’entête (id,name,lat,lon,...) et les lat/lon.")
-
 # ============================================================
 # 6) Carte
 # ============================================================
@@ -350,16 +360,14 @@ folium.Marker(
     location=[HOUSE_LAT, HOUSE_LON],
     tooltip="Ma maison",
     popup="⛪️ Ma maison — Avenue des Collèges 29",
+    icon=folium.DivIcon(html="""
+        <div style="font-size:40px; line-height:40px; transform: translate(-18px, -32px);">⛪️</div>
+    """),
 ).add_to(m)
 
-# Cluster (optionnel)
-cluster_layer = None
-if not use_cluster:
-    cluster_layer = m  # pas de cluster, on ajoute directement sur la carte
-else:
-    cluster_layer = MarkerCluster().add_to(m)
+cluster = MarkerCluster().add_to(m)
 
-# ---------- Icônes SVG personnalisées ----------
+# Pins SVG
 PIN_SVG_TEMPLATE = """
 <svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 36 48">
   <ellipse cx="18" cy="46" rx="7" ry="2.5" fill="rgba(0,0,0,0.25)"/>
@@ -395,58 +403,28 @@ def make_custom_pin(fill_color: str, for_mushroom: bool) -> CustomIcon:
     url = build_pin_svg(fill_color, glyph)
     return CustomIcon(icon_image=url, icon_size=(30, 42), icon_anchor=(15, 40))
 
-# ---------- Création des marqueurs ----------
+# Markers
 def add_tree_marker(tree):
     fill = colors.get(tree["name"], "green")
-    popup = folium.Popup(html=f"{tree['name']}", max_width=250)
-    if use_simple_icons:
-        # hyper-stable : CircleMarker
-        folium.CircleMarker(
-            location=[tree["lat"], tree["lon"]],
-            radius=7,
-            weight=2,
-            opacity=1,
-            fill=True,
-            fill_opacity=0.9,
-            popup=popup,
-        ).add_to(cluster_layer)
-    else:
-        folium.Marker(
-            location=[tree["lat"], tree["lon"]],
-            popup=popup,
-            icon=make_custom_pin(fill, for_mushroom=False),
-        ).add_to(cluster_layer)
+    folium.Marker(
+        location=[tree["lat"], tree["lon"]],
+        popup=f"{tree['name']}",
+        icon=make_custom_pin(fill, for_mushroom=False),
+    ).add_to(cluster)
 
 def add_mushroom_marker(tree):
     fill = colors.get(tree["name"], "gray")
-    popup = folium.Popup(html=f"{tree['name']}", max_width=250)
-    if use_simple_icons:
-        folium.CircleMarker(
-            location=[tree["lat"], tree["lon"]],
-            radius=7,
-            weight=2,
-            opacity=1,
-            fill=True,
-            fill_opacity=0.9,
-            popup=popup,
-        ).add_to(cluster_layer)
-    else:
-        folium.Marker(
-            location=[tree["lat"], tree["lon"]],
-            popup=popup,
-            icon=make_custom_pin(fill, for_mushroom=True),
-        ).add_to(cluster_layer)
+    folium.Marker(
+        location=[tree["lat"], tree["lon"]],
+        popup=f"{tree['name']}",
+        icon=make_custom_pin(fill, for_mushroom=True),
+    ).add_to(cluster)
 
-# Ajoute tous les points filtrés
 for t in filtered:
-    try:
-        if t["name"] in MUSHROOM_SET:
-            add_mushroom_marker(t)
-        else:
-            add_tree_marker(t)
-    except Exception as e:
-        # On continue même si un point est invalide
-        pass
+    if t["name"] in MUSHROOM_SET:
+        add_mushroom_marker(t)
+    else:
+        add_tree_marker(t)
 
 # Repère de recherche
 if st.session_state["search_center"] is not None:
@@ -454,6 +432,7 @@ if st.session_state["search_center"] is not None:
         location=center,
         tooltip=st.session_state["search_label"] or "Résultat de recherche",
         popup=st.session_state["search_label"] or "Résultat de recherche",
+        icon=folium.Icon(color="blue", icon="search", prefix="fa"),
     ).add_to(m)
     folium.Circle(location=center, radius=35, color="blue", fill=True, fill_opacity=0.15).add_to(m)
 
@@ -461,10 +440,13 @@ if st.session_state["search_center"] is not None:
 folium.LatLngPopup().add_to(m)
 MousePosition(position="topright", separator=" | ", empty_string="", num_digits=6, prefix="📍").add_to(m)
 
-# Légende repliable (affiche l’aperçu des pins même si CircleMarker est activé)
+# Légende repliable
 def legend_pin_dataurl(name: str) -> str:
     col = colors.get(name, "green")
-    return build_pin_svg(col, glyph_mushroom_white() if name in MUSHROOM_SET else glyph_tree_white(), w=18, h=24)
+    if name in MUSHROOM_SET:
+        return build_pin_svg(col, glyph_mushroom_white(), w=18, h=24)
+    else:
+        return build_pin_svg(col, glyph_tree_white(), w=18, h=24)
 
 legend_rows = []
 for name in sorted(set(CATALOG)):
@@ -494,62 +476,10 @@ legend_html = f"""
 m.get_root().html.add_child(folium.Element(legend_html))
 
 # Affichage carte
-st_folium(m, width=1000, height=600)
+st_folium(m, width=900, height=520)
 
 # ============================================================
-# 7) Ajouter / Supprimer un point (UI)
-# ============================================================
-st.sidebar.subheader("➕/➖ Ajouter ou supprimer un point")
-mode = st.sidebar.radio("Choisir mode", ["Ajouter", "Supprimer"], index=0, horizontal=True, label_visibility="collapsed")
-
-with st.sidebar.form("add_or_delete_form"):
-    if mode == "Ajouter":
-        new_name = st.selectbox("Catégorie", options=sorted(set(CATALOG + [t["name"] for t in st.session_state["trees"]])), index=0)
-        col_a, col_b = st.columns(2)
-        with col_a:
-            new_lat = st.number_input("Latitude", value=46.519100, format="%.6f")
-        with col_b:
-            new_lon = st.number_input("Longitude", value=6.633600, format="%.6f")
-        all_seasons = ["printemps", "été", "automne", "hiver"]
-        new_seasons = st.multiselect("Saison(s)", options=all_seasons, default=["automne"])
-
-        submitted_add = st.form_submit_button("Ajouter & enregistrer")
-        if submitted_add:
-            try:
-                add_item(new_name, float(new_lat), float(new_lon), new_seasons or [])
-                st.session_state["trees"] = load_items()
-                st.success(f"Ajouté : {new_name} ✅ (persisté)")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Erreur lors de l'ajout : {e}")
-
-    else:
-        trees = st.session_state.get("trees", [])
-        if not trees:
-            st.info("Aucun point à supprimer.")
-            _ = st.form_submit_button("Supprimer définitivement", disabled=True)
-        else:
-            options_labels, idx_to_id = [], {}
-            for i, t in enumerate(trees):
-                seasons_txt = _serialize_seasons(t.get("seasons", [])) or "—"
-                options_labels.append(f"{i+1}. {t['name']} – {t['lat']:.5f}, {t['lon']:.5f} [{seasons_txt}]")
-                idx_to_id[i] = t["id"]
-
-            idx_choice = st.selectbox("Choisis le point à supprimer", options=list(idx_to_id.keys()), format_func=lambda i: options_labels[i])
-            confirm = st.checkbox("Je confirme la suppression", value=False)
-            submitted_del = st.form_submit_button("Supprimer définitivement", disabled=not confirm)
-
-            if submitted_del and confirm:
-                try:
-                    soft_delete_item(idx_to_id[idx_choice])
-                    st.session_state["trees"] = load_items()
-                    st.success("Point supprimé (soft delete) ✅")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Erreur lors de la suppression : {e}")
-
-# ============================================================
-# 8) Stats & export
+# 7) Stats & export
 # ============================================================
 counts = Counter(t["name"] for t in filtered)
 total = len(filtered)
@@ -562,10 +492,7 @@ else:
 
 st.markdown("---")
 _df_full = _read_df()
-cols_wanted = ["name","lat","lon","seasons"]
-cols_present = [c for c in cols_wanted if c in _df_full.columns]
-mask = (_df_full["is_deleted"].astype(str) != "1") if "is_deleted" in _df_full.columns else True
-_df_export = _df_full[mask][cols_present].copy()
+_df_export = _df_full[_df_full["is_deleted"] != "1"][["name","lat","lon","seasons"]].copy()
 st.download_button(
     "⬇️ Télécharger tous les points (CSV)",
     data=_df_export.to_csv(index=False),
