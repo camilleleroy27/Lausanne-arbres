@@ -41,53 +41,138 @@ if not MOBILE_COMPACT:
 # =========================================
 # CSS responsive + barre de titre 100% mobile
 # =========================================
-mobile_css = f"""
-<style>
-/*******************************
- * 1) Gabarit généraux
- *******************************/
-/* Réduit les marges globales sur mobile et évite les débordements horizontaux */
-@media (max-width: 640px){{
-  .block-container {{ padding: 0.6rem 0.7rem !important; }}
-  [data-testid="stHorizontalBlock"] {{ overflow: visible !important; }}
-}}
-
-/* Sidebar un peu plus large sur mobile, avec z-index élevé pour passer au-dessus des overlays */
-@media (max-width: 640px){{
-  .stSidebar {{ width: 84vw !important; z-index: 10000 !important; }}
-}}
-
-/*******************************
- * 2) Barre de titre collante (mobile)
- *******************************/
-@media (max-width: 640px){{
-  /* On masque le H1 Streamlit pour éviter un double-titre et gagner de la place */
-  .block-container h1 {{ display: none; }}
-
-  /* Barre fixe en haut de l'écran */
-  #appbar-mobile {{
-    position: sticky; /* reste visible même quand on scrolle */
-    top: 0;
-    background: #ffffffee;
-    backdrop-filter: saturate(1.2) blur(6px);
-    border-bottom: 1px solid rgba(0,0,0,0.08);
-    padding: 10px 12px;
-    z-index: 9998;
-  }}
-  #appbar-mobile h1 {{
-    margin: 0;
-    font-size: 18px;
-    line-height: 1.25;
-  }}
-}}
-
-/*******************************
- * 3) Légende plus compacte
- *******************************/
-@media (max-width: 640px){{
-  #legend-card {{ left: 12px !important; bottom: 12px !important; }}
-  #legend-card details {{ font-size: 12px !important; max-width: 180px !important; }}
-}}
+*** a/app.py
+--- b/app.py
+@@
+ mobile_css = f"""
+ <style>
+ /*******************************
+  * 1) Gabarit généraux
+  *******************************/
+ /* Réduit les marges globales sur mobile et évite les débordements horizontaux */
+-@media (max-width: 640px){
+-  .block-container { padding: 0.6rem 0.7rem !important; }
+-  [data-testid="stHorizontalBlock"] { overflow: visible !important; }
+-}
+-
+-/* Sidebar un peu plus large sur mobile, avec z-index élevé pour passer au-dessus des overlays */
+-@media (max-width: 640px){
+-  .stSidebar { width: 84vw !important; z-index: 10000 !important; }
+-}
++@media (max-width: 640px){
++  .block-container { padding: 0.6rem 0.7rem !important; }
++  [data-testid="stHorizontalBlock"] { overflow: visible !important; }
++  /* Sidebar un peu plus large sur mobile, au-dessus des overlays */
++  .stSidebar { width: 84vw !important; z-index: 10000 !important; }
++}
+ 
+ /*******************************
+  * 2) Barre de titre collante (mobile)
+  *******************************/
+ @media (max-width: 640px){
+   /* On masque le H1 Streamlit pour éviter un double-titre et gagner de la place */
+-  .block-container h1 { display: none; }
+-
+-  /* Barre fixe en haut de l'écran */
+-  #appbar-mobile {
+-    position: sticky; /* reste visible même quand on scrolle */
+-    top: 0;
+-    background: #ffffffee;
+-    backdrop-filter: saturate(1.2) blur(6px);
+-    border-bottom: 1px solid rgba(0,0,0,0.08);
+-    padding: 10px 12px;
+-    z-index: 9998;
+-  }
+-  #appbar-mobile h1 {
+-    margin: 0;
+-    font-size: 18px;
+-    line-height: 1.25;
+-  }
++  .block-container h1 { display: none; }
++
++  /* Appbar façon Google Maps : ne couvre pas le coin haut-gauche (>>), ne capture pas tous les clics */
++  #appbar-mobile {
++    position: sticky;
++    top: 0;
++    margin-left: 56px;                 /* laisse la zone du bouton >> cliquable */
++    max-width: calc(100% - 64px);
++    z-index: 900;                      /* sous les contrôles Streamlit (>> reste au-dessus) */
++    pointer-events: none;              /* ne bloque pas les interactions derrière */
++  }
++  #appbar-mobile .appbar-inner {
++    display: flex;
++    gap: 10px;
++    align-items: center;
++    background: #ffffffee;
++    backdrop-filter: saturate(1.2) blur(6px);
++    border: 1px solid rgba(0,0,0,0.08);
++    box-shadow: 0 2px 10px rgba(0,0,0,.10);
++    border-radius: 14px;
++    padding: 8px 12px;
++    pointer-events: auto;              /* les éléments internes redeviennent cliquables */
++  }
++  #appbar-mobile h1 {
++    margin: 0;
++    font-size: 16px;
++    line-height: 1.25;
++    white-space: nowrap;
++    overflow: hidden;
++    text-overflow: ellipsis;
++  }
++  #appbar-mobile .hint {
++    font-size: 12.5px;
++    opacity: .75;
++  }
+ }
+ 
+ /*******************************
+  * 3) Légende plus compacte
+  *******************************/
+@@
+ st.markdown(mobile_css, unsafe_allow_html=True)
+ 
+ # Barre d'app (mobile). Sur desktop, on garde le H1 standard.
+ if MOBILE_COMPACT:
+-    st.markdown(
+-        """
+-        <div id="appbar-mobile">
+-          <h1>Carte des arbres fruitiers & champignons à Lausanne</h1>
+-          <div style="font-size:12.5px; opacity:.75">Astuce : replie la barre latérale via ☰ pour profiter de toute la largeur.</div>
+-        </div>
+-        """,
+-        unsafe_allow_html=True,
+-    )
++    st.markdown(
++        """
++        <div id="appbar-mobile">
++          <div class="appbar-inner">
++            <h1>Carte des arbres fruitiers &amp; champignons à Lausanne</h1>
++            <div class="hint">Astuce : replie la barre latérale via ☰</div>
++          </div>
++        </div>
++        """,
++        unsafe_allow_html=True,
++    )
+@@
+-# ====== NOUVEAU : Titre flottant dans la carte (visibilité garantie sur mobile) ======
+-map_title_html = f"""
+-<div style=\"position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 9990;\">
+-  <div style=\"background: #ffffffee; border: 1px solid rgba(0,0,0,.1); border-radius: 10px; padding: 6px 10px; box-shadow: 0 2px 8px rgba(0,0,0,.12); font-size: 13.5px;\">
+-    🌳 Carte des arbres & champignons – Lausanne
+-  </div>
+-</div>
+-"""
+-m.get_root().html.add_child(folium.Element(map_title_html))
++## Titre flottant sur la carte (mobile uniquement), positionné sous l'appbar
++if MOBILE_COMPACT:
++    map_title_html = """
++    <div style="position: fixed; top: 58px; left: 50%; transform: translateX(-50%); z-index: 850;">
++      <div style="background: #ffffffee; border: 1px solid rgba(0,0,0,.1); border-radius: 12px; padding: 6px 10px; box-shadow: 0 2px 8px rgba(0,0,0,.12); font-size: 13px;">
++        🌳 Carte des arbres &amp; champignons – Lausanne
++      </div>
++    </div>
++    """
++    m.get_root().html.add_child(folium.Element(map_title_html))
 
 /*******************************
  * 4) Boutons/inputs plus "touch-friendly"
