@@ -41,7 +41,7 @@ if not MOBILE_COMPACT:
 # =========================================
 # CSS responsive + appbar mobile
 # =========================================
-mobile_css = f"""
+mobile_css = """
 <style>
 /* ======== 1) Gabarits généraux ======== */
 @media (max-width: 640px){
@@ -103,21 +103,18 @@ mobile_css = f"""
 
 /* ======== 5) Bouton ">>" (toggle sidebar) toujours visible sur mobile ======== */
 @media (max-width: 640px){
-  /* Place le conteneur du bouton en haut à gauche, au-dessus des overlays */
   [data-testid="collapsedControl"]{
     position: fixed !important;
     top: 8px !important;
     left: 8px !important;
     z-index: 10001 !important;
   }
-  /* Donne un fond/pilule au bouton pour éviter le blanc sur blanc */
   [data-testid="collapsedControl"] button{
     background: #f4f4f8 !important;
     border: 1px solid rgba(0,0,0,.08) !important;
     border-radius: 12px !important;
     box-shadow: 0 1px 6px rgba(0,0,0,.12) !important;
   }
-  /* Icône plus lisible */
   [data-testid="collapsedControl"] svg{
     stroke: #333 !important;
     filter: drop-shadow(0 0 1px rgba(0,0,0,.25));
@@ -126,6 +123,7 @@ mobile_css = f"""
 </style>
 """
 st.markdown(mobile_css, unsafe_allow_html=True)
+
 
 # ============================================================
 # 0) Mode persistant OBLIGATOIRE (Google Sheets) + garde-fou tolérant
