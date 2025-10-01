@@ -94,16 +94,48 @@ def _gsheets_open():
 
 @st.cache_data(ttl=10)
 def _read_df():
-    """Lit toutes les lignes depuis Google Sheets (avec cache court)."""
+    """Lit toutes les lignes depuis Google Sheets (robuste aux entêtes manquantes)."""
     ws = _gsheets_open()
-    rows = ws.get_all_records()
-    if not rows:
-        return pd.DataFrame(columns=["id","name","lat","lon","seasons","is_deleted","updated_at"])
-    df = pd.DataFrame(rows)
-    if "is_deleted" not in df.columns:
-        df["is_deleted"] = "0"
+
+    EXPECTED = ["id","name","lat","lon","seasons","is_deleted","updated_at"]
+
+    # Lire brut pour détecter un header cassé
+    values = ws.get_all_values()  # list[list]
+    if not values:
+        return pd.DataFrame(columns=EXPECTED)
+
+    headers = values[0]
+    data_rows = values[1:] if len(values) > 1 else []
+
+    # Cas entête OK
+    if set(["id", "name", "lat", "lon"]).issubset(set(headers)):
+        rows = ws.get_all_records()  # utilise la première ligne comme entête
+        df = pd.DataFrame(rows)
+    else:
+        # Entête cassée -> forcer entête attendue en mémoire
+        if data_rows:
+            # si la feuille a moins de 7 colonnes, on tronque la liste EXPECTED
+            nb_cols = max(len(r) for r in data_rows)
+            forced_cols = EXPECTED[:nb_cols]
+            df = pd.DataFrame(data_rows, columns=forced_cols)
+            # s'assurer que toutes les colonnes attendues existent
+            for col in EXPECTED:
+                if col not in df.columns:
+                    df[col] = ""
+            df = df[EXPECTED]
+        else:
+            df = pd.DataFrame(columns=EXPECTED)
+
+    # Colonnes manquantes -> par défaut
+    for col in EXPECTED:
+        if col not in df.columns:
+            df[col] = "" if col != "is_deleted" else "0"
+
+    # Normaliser is_deleted/seasons
+    df["is_deleted"] = df["is_deleted"].replace("", "0")
     if "seasons" not in df.columns:
         df["seasons"] = ""
+
     return df
 
 def _invalidate_cache():
@@ -142,7 +174,7 @@ def add_item(name: str, lat: float, lon: float, seasons: list):
         "0",           # is_deleted
         _now_iso(),    # updated_at
     ]
-    # ✅ RAW pour éviter que Sheets remette des virgules via la locale
+    # ✅ RAW pour éviter que Sheets re-formate via la locale
     ws.append_row(row, value_input_option="RAW")
     _invalidate_cache()
 
@@ -214,6 +246,17 @@ if st.sidebar.button("🔄 Rafraîchir les données"):
     _invalidate_cache()
     st.session_state["trees"] = load_items()
     st.rerun()
+
+# Bouton pour réparer l'entête si besoin
+if st.sidebar.button("🛠️ Réparer l’entête (A1:G1)"):
+    try:
+        ws = _gsheets_open()
+        ws.update("A1:G1", [["id","name","lat","lon","seasons","is_deleted","updated_at"]])
+        _invalidate_cache()
+        st.success("Entête réparée ✅")
+        st.rerun()
+    except Exception as e:
+        st.error(f"Impossible de réparer l'entête : {e}")
 
 st.sidebar.subheader("➕/➖ Ajouter ou supprimer un point")
 mode = st.sidebar.radio("Choisir mode", ["Ajouter", "Supprimer"], index=0, horizontal=True, label_visibility="collapsed")
@@ -492,7 +535,9 @@ else:
 
 st.markdown("---")
 _df_full = _read_df()
-_df_export = _df_full[_df_full["is_deleted"] != "1"][["name","lat","lon","seasons"]].copy()
+cols_wanted = ["name","lat","lon","seasons"]
+cols_present = [c for c in cols_wanted if c in _df_full.columns]
+_df_export = _df_full[_df_full.get("is_deleted", "0") != "1"][cols_present].copy()
 st.download_button(
     "⬇️ Télécharger tous les points (CSV)",
     data=_df_export.to_csv(index=False),
