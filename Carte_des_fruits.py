@@ -9,6 +9,7 @@ from typing import Optional, Tuple
 import urllib.parse
 import uuid
 from datetime import datetime
+import streamlit.components.v1 as components  # <-- pour le bouton flottant (fallback)
 
 # --- géocodage (optionnel) ---
 try:
@@ -101,36 +102,108 @@ mobile_css = """
   .stSelectbox, .stTextInput, .stNumberInput { font-size: .98rem !important; }
 }
 
-/* ======== 5) Bouton ">>" (toggle sidebar) toujours visible sur mobile ======== */
-/* Bouton ">>" toujours visible et contrasté, même quand la sidebar est ouverte */
+/* ======== 5) Bouton ">>" (toggle sidebar) visible & contrasté, même sidebar ouverte ======== */
 @media (max-width: 640px){
-  [data-testid="collapsedControl"] {
+  [data-testid="collapsedControl"]{
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+
     position: fixed !important;
     top: 10px !important;
     left: 10px !important;
     z-index: 20000 !important;  /* au-dessus de la sidebar */
+    pointer-events: auto !important;
   }
-  [data-testid="collapsedControl"] button {
+  [data-testid="collapsedControl"] button{
     background: #f0f0f5 !important;   /* fond gris clair */
     border: 1px solid rgba(0,0,0,.25) !important;
     border-radius: 12px !important;
     box-shadow: 0 2px 6px rgba(0,0,0,.25) !important;
     color: #222 !important;
   }
-  [data-testid="collapsedControl"] svg {
+  [data-testid="collapsedControl"] svg{
     stroke: #222 !important;
   }
 }
 
-
+/* (Optionnel) Masque le bouton flottant custom sur desktop */
+@media (min-width: 641px){
+  #sb-float-toggle { display: none !important; }
+}
 </style>
 """
 st.markdown(mobile_css, unsafe_allow_html=True)
 
+# === Fallback universel : bouton flottant ≡ / × toujours visible (mobile) ===
+if MOBILE_COMPACT:
+    components.html("""
+    <script>
+    (function(){
+      const doc = window.parent.document;
+
+      function hasSidebarOpen(){
+        const sb = doc.querySelector('[data-testid="stSidebar"]');
+        if (!sb) return false;
+        // Heuristique: largeur > 0 ou transform appliqué => ouverte
+        const rect = sb.getBoundingClientRect();
+        return rect.width > 0 && rect.right > 0;
+      }
+
+      function clickNativeToggle(){
+        const btn = doc.querySelector('[data-testid="collapsedControl"] button');
+        if (btn){ btn.click(); return true; }
+        return false;
+      }
+
+      function updateFloatingButtonIcon(el){
+        el.textContent = hasSidebarOpen() ? '×' : '≡';
+        el.title = hasSidebarOpen() ? 'Fermer le menu' : 'Ouvrir le menu';
+      }
+
+      // Evite doublons
+      if (!doc.getElementById('sb-float-toggle')) {
+        const toggle = doc.createElement('button');
+        toggle.id = 'sb-float-toggle';
+        toggle.type = 'button';
+        updateFloatingButtonIcon(toggle);
+        Object.assign(toggle.style, {
+          position:'fixed',
+          top:'10px',
+          left:'10px',
+          zIndex:'30000',
+          background:'#f0f0f5',
+          border:'1px solid rgba(0,0,0,.25)',
+          borderRadius:'12px',
+          padding:'6px 10px',
+          fontSize:'18px',
+          boxShadow:'0 2px 6px rgba(0,0,0,.25)',
+          cursor:'pointer'
+        });
+        toggle.addEventListener('click', function(e){
+          e.stopPropagation();
+          if (!clickNativeToggle()){
+            // Si le bouton natif est introuvable, on tente de cliquer là où il se trouve d’habitude
+            const fake = doc.querySelector('[data-testid="stSidebar"] header button, [role=button]');
+            if (fake) fake.click();
+          }
+          // Laisse un petit temps pour que le DOM se mette à jour, puis met à jour l'icône
+          setTimeout(()=>updateFloatingButtonIcon(toggle), 100);
+        });
+        doc.body.appendChild(toggle);
+
+        // Observe les changements de layout pour rafraîchir l'icône (ouverture/fermeture via d'autres clics)
+        const obs = new MutationObserver(()=>updateFloatingButtonIcon(toggle));
+        obs.observe(doc.body, { attributes:true, childList:true, subtree:true });
+      }
+    })();
+    </script>
+    """, height=0, width=0)
+
 # Hauteur carte adaptée
 MAP_HEIGHT = 520
 if MOBILE_COMPACT:
-  MAP_HEIGHT = 680
+    MAP_HEIGHT = 680
 
 # ============================================================
 # 0) Mode persistant OBLIGATOIRE (Google Sheets) + garde-fou tolérant
@@ -256,7 +329,6 @@ def load_items():
         lat = _to_float_or_none(row.get("lat"))
         lon = _to_float_or_none(row.get("lon"))
         if lat is None or lon is None:
-            # ignore lignes invalides
             continue
         items.append(
             {
@@ -304,9 +376,8 @@ def soft_delete_item(item_id: str) -> bool:
         st.error("Colonnes attendues absentes (id / is_deleted / updated_at).")
         return False
 
-    # Trouve la ligne correspondant à l'ID (ignorer entête)
     row_idx = None
-    for r in range(2, len(values) + 1):  # 1-indexed; démarre à la 2e ligne
+    for r in range(2, len(values) + 1):
         if values[r - 1][id_col - 1] == str(item_id):
             row_idx = r
             break
@@ -315,12 +386,10 @@ def soft_delete_item(item_id: str) -> bool:
         st.warning("ID non trouvé ; rien supprimé.")
         return False
 
-    # Construit la plage A1 pour les deux cellules à mettre à jour
     start_a1 = rowcol_to_a1(row_idx, isdel_col)
     end_a1 = rowcol_to_a1(row_idx, upd_col)
     rng = f"{start_a1}:{end_a1}"
 
-    # Mise à jour en 1 appel : [ [is_deleted, updated_at] ]
     ws.update(rng, [["1", _now_iso()]], value_input_option="RAW")
 
     _invalidate_cache()
@@ -341,21 +410,9 @@ if "search_label" not in st.session_state:
 # 3) Catalogue & couleurs
 # ============================================================
 CATALOG = [
-    "Pomme",
-    "Poire",
-    "Figue",
-    "Grenade",
-    "Kiwi",
-    "Nèfle",
-    "Kaki",
-    "Noix",
-    "Sureau",
-    "Noisette",
-    "Faînes",
-    # champignons
-    "Bolets",
-    "Chanterelles",
-    "Morilles",
+    "Pomme", "Poire", "Figue", "Grenade", "Kiwi", "Nèfle", "Kaki",
+    "Noix", "Sureau", "Noisette", "Faînes",
+    "Bolets", "Chanterelles", "Morilles",
 ]
 
 colors = {
@@ -370,7 +427,6 @@ colors = {
     "Kaki": "orange",
     "Sureau": "black",
     "Faînes": "#A0522D",
-    # champignons
     "Bolets": "#8B4513",
     "Chanterelles": "orange",
     "Morilles": "black",
@@ -381,7 +437,6 @@ MUSHROOM_SET = {"Bolets", "Chanterelles", "Morilles"}
 # ============================================================
 # 4) Barre latérale — ordre : Filtres → Recherche → Ajout/Suppression → Refresh
 # ============================================================
-# ---------- (1) FILTRES EN PREMIER ----------
 st.sidebar.header("Filtres")
 
 basemap_label_to_tiles = {
@@ -695,7 +750,7 @@ legend_html = f"""
 """
 m.get_root().html.add_child(folium.Element(legend_html))
 
-# ====== Titre flottant dans la carte (mobile uniquement), EN HAUT À DROITE ======
+# ====== Titre flottant : mobile uniquement, EN HAUT À DROITE ======
 if MOBILE_COMPACT:
     map_title_html = """
     <div style="position: fixed; top: 58px; right: 12px; z-index: 850;">
@@ -723,7 +778,6 @@ with st.expander("📊 Statistiques & export", expanded=not MOBILE_COMPACT):
 
     st.markdown("---")
     _df_full = _read_df()
-    # Normalise is_deleted pour filtrer correctement à l'export
     if "is_deleted" not in _df_full.columns:
         _df_full["is_deleted"] = "0"
     _df_full["is_deleted"] = _normalize_is_deleted(_df_full["is_deleted"])
