@@ -109,7 +109,7 @@ def _invalidate_cache():
 def load_items():
     """Retourne les items (non supprimés) comme liste de dicts."""
     df = _read_df()
-    df = df[df["is_deleted"] != "1"].copy()
+    df = df[df["is_deleted"].astype(str) != "1"].copy()
     items = []
     for _, row in df.iterrows():
         try:
