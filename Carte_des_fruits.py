@@ -9,6 +9,7 @@ from typing import Optional, Tuple
 import urllib.parse
 import uuid
 from datetime import datetime
+import math
 
 # --- géocodage (optionnel) ---
 try:
@@ -99,7 +100,6 @@ def _ensure_header(ws) -> None:
         ws.update("A1:G1", [EXPECTED_HEADER])
         return
     headers = values[0]
-    # si l'entête ne contient pas l'essentiel -> on réécrit l'entête correcte
     if not set(["id", "name", "lat", "lon"]).issubset(set(headers)):
         ws.update("A1:G1", [EXPECTED_HEADER])
 
@@ -131,19 +131,23 @@ def _invalidate_cache():
 def load_items():
     """Retourne les items (non supprimés) comme liste de dicts (lat/lon robustes)."""
     df = _read_df()
-    df = df[df["is_deleted"] != "1"].copy()
+    if "is_deleted" in df.columns:
+        df = df[df["is_deleted"] != "1"].copy()
+
     items = []
     for _, row in df.iterrows():
         try:
             lat = _to_float(row["lat"])
             lon = _to_float(row["lon"])
+            if not (math.isfinite(lat) and math.isfinite(lon)):
+                continue
         except Exception:
             continue  # ignore lignes invalides
         items.append({
             "id": str(row.get("id", "")),
-            "name": row.get("name", ""),
-            "lat": lat,
-            "lon": lon,
+            "name": str(row.get("name", "")),
+            "lat": float(lat),
+            "lon": float(lon),
             "seasons": _parse_seasons(row.get("seasons", "")),
         })
     return items
@@ -222,26 +226,32 @@ colors = {
 MUSHROOM_SET = {"Bolets", "Chanterelles", "Morilles"}
 
 # ============================================================
-# 4) Actions (incl. mode test icônes + debug)
+# 4) Actions (mode test + debug + cluster)
 # ============================================================
 st.sidebar.markdown("---")
-
-# 🧪 Interrupteur : forcer des icônes folium simples (bypass SVG)
-use_simple_icons = st.sidebar.checkbox("🧪 Icônes simples (test)", value=False)
+use_simple_icons = st.sidebar.checkbox("🧪 Icônes simples (CircleMarker)", value=True)
+use_cluster = st.sidebar.checkbox("🧪 Désactiver le clustering ?", value=True)
 
 if st.sidebar.button("🔄 Rafraîchir les données"):
     _invalidate_cache()
     st.session_state["trees"] = load_items()
     st.rerun()
 
-with st.sidebar.expander("🔍 Debug (temporaire)"):
+with st.sidebar.expander("🔍 Debug (temporaire)", expanded=False):
     try:
         _df = _read_df()
-        st.write("Lignes lues depuis Google Sheets :", len(_df))
+        st.write("Lignes lues :", len(_df))
         st.write("Colonnes :", list(_df.columns))
         st.dataframe(_df.head(10))
     except Exception as e:
         st.error(f"Erreur lecture DF : {e}")
+
+    # Aperçu des 3 premiers items interprétés
+    try:
+        items_dbg = st.session_state["trees"][:3]
+        st.write("3 premiers items interprétés :", items_dbg)
+    except Exception as e:
+        st.error(f"Erreur items : {e}")
 
 # ============================================================
 # 5) Filtres + recherche
@@ -321,6 +331,7 @@ if selected_seasons:
 # Alerte si aucun point
 if len(items) == 0:
     st.warning("Aucun point chargé depuis Google Sheets. Vérifie l’onglet (gsheets_worksheet_name), l’entête (id,name,lat,lon,...) et les lat/lon.")
+
 # ============================================================
 # 6) Carte
 # ============================================================
@@ -339,12 +350,14 @@ folium.Marker(
     location=[HOUSE_LAT, HOUSE_LON],
     tooltip="Ma maison",
     popup="⛪️ Ma maison — Avenue des Collèges 29",
-    icon=folium.DivIcon(html="""
-        <div style="font-size:40px; line-height:40px; transform: translate(-18px, -32px);">⛪️</div>
-    """),
 ).add_to(m)
 
-cluster = MarkerCluster().add_to(m)
+# Cluster (optionnel)
+cluster_layer = None
+if not use_cluster:
+    cluster_layer = m  # pas de cluster, on ajoute directement sur la carte
+else:
+    cluster_layer = MarkerCluster().add_to(m)
 
 # ---------- Icônes SVG personnalisées ----------
 PIN_SVG_TEMPLATE = """
@@ -385,43 +398,55 @@ def make_custom_pin(fill_color: str, for_mushroom: bool) -> CustomIcon:
 # ---------- Création des marqueurs ----------
 def add_tree_marker(tree):
     fill = colors.get(tree["name"], "green")
+    popup = folium.Popup(html=f"{tree['name']}", max_width=250)
     if use_simple_icons:
-        # Icône folium simple (stable)
-        folium.Marker(
+        # hyper-stable : CircleMarker
+        folium.CircleMarker(
             location=[tree["lat"], tree["lon"]],
-            popup=f"{tree['name']}",
-            icon=folium.Icon(color="green", icon="info-sign"),
-        ).add_to(cluster)
+            radius=7,
+            weight=2,
+            opacity=1,
+            fill=True,
+            fill_opacity=0.9,
+            popup=popup,
+        ).add_to(cluster_layer)
     else:
-        # Icône SVG personnalisée
         folium.Marker(
             location=[tree["lat"], tree["lon"]],
-            popup=f"{tree['name']}",
+            popup=popup,
             icon=make_custom_pin(fill, for_mushroom=False),
-        ).add_to(cluster)
+        ).add_to(cluster_layer)
 
 def add_mushroom_marker(tree):
     fill = colors.get(tree["name"], "gray")
+    popup = folium.Popup(html=f"{tree['name']}", max_width=250)
     if use_simple_icons:
-        # Icône folium simple (stable)
-        folium.Marker(
+        folium.CircleMarker(
             location=[tree["lat"], tree["lon"]],
-            popup=f"{tree['name']}",
-            icon=folium.Icon(color="orange", icon="info-sign"),
-        ).add_to(cluster)
+            radius=7,
+            weight=2,
+            opacity=1,
+            fill=True,
+            fill_opacity=0.9,
+            popup=popup,
+        ).add_to(cluster_layer)
     else:
-        # Icône SVG personnalisée
         folium.Marker(
             location=[tree["lat"], tree["lon"]],
-            popup=f"{tree['name']}",
+            popup=popup,
             icon=make_custom_pin(fill, for_mushroom=True),
-        ).add_to(cluster)
+        ).add_to(cluster_layer)
 
+# Ajoute tous les points filtrés
 for t in filtered:
-    if t["name"] in MUSHROOM_SET:
-        add_mushroom_marker(t)
-    else:
-        add_tree_marker(t)
+    try:
+        if t["name"] in MUSHROOM_SET:
+            add_mushroom_marker(t)
+        else:
+            add_tree_marker(t)
+    except Exception as e:
+        # On continue même si un point est invalide
+        pass
 
 # Repère de recherche
 if st.session_state["search_center"] is not None:
@@ -429,7 +454,6 @@ if st.session_state["search_center"] is not None:
         location=center,
         tooltip=st.session_state["search_label"] or "Résultat de recherche",
         popup=st.session_state["search_label"] or "Résultat de recherche",
-        icon=folium.Icon(color="blue", icon="info-sign"),
     ).add_to(m)
     folium.Circle(location=center, radius=35, color="blue", fill=True, fill_opacity=0.15).add_to(m)
 
@@ -437,13 +461,10 @@ if st.session_state["search_center"] is not None:
 folium.LatLngPopup().add_to(m)
 MousePosition(position="topright", separator=" | ", empty_string="", num_digits=6, prefix="📍").add_to(m)
 
-# Légende repliable
+# Légende repliable (affiche l’aperçu des pins même si CircleMarker est activé)
 def legend_pin_dataurl(name: str) -> str:
     col = colors.get(name, "green")
-    if name in MUSHROOM_SET:
-        return build_pin_svg(col, glyph_mushroom_white(), w=18, h=24)
-    else:
-        return build_pin_svg(col, glyph_tree_white(), w=18, h=24)
+    return build_pin_svg(col, glyph_mushroom_white() if name in MUSHROOM_SET else glyph_tree_white(), w=18, h=24)
 
 legend_rows = []
 for name in sorted(set(CATALOG)):
@@ -473,7 +494,7 @@ legend_html = f"""
 m.get_root().html.add_child(folium.Element(legend_html))
 
 # Affichage carte
-st_folium(m, width=900, height=520)
+st_folium(m, width=1000, height=600)
 
 # ============================================================
 # 7) Ajouter / Supprimer un point (UI)
@@ -496,8 +517,6 @@ with st.sidebar.form("add_or_delete_form"):
         if submitted_add:
             try:
                 add_item(new_name, float(new_lat), float(new_lon), new_seasons or [])
-                if new_name not in colors:
-                    colors[new_name] = "green"
                 st.session_state["trees"] = load_items()
                 st.success(f"Ajouté : {new_name} ✅ (persisté)")
                 st.rerun()
