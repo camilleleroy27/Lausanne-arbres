@@ -233,7 +233,7 @@ if "search_label" not in st.session_state:
 # ============================================================
 CATALOG = [
     "Pomme", "Poire", "Figue", "Grenade", "Kiwi", "Nèfle", "Kaki",
-    "Noix", "Sureau", "Noisette", "Faînes"
+    "Noix", "Sureau", "Noisette", "Faînes",
     # champignons
     "Bolets", "Chanterelles", "Morilles",
 ]
