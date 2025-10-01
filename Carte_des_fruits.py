@@ -233,7 +233,7 @@ if "search_label" not in st.session_state:
 # ============================================================
 CATALOG = [
     "Pomme", "Poire", "Figue", "Grenade", "Kiwi", "Nèfle", "Kaki",
-    "Noix", "Sureau", "Noisette",
+    "Noix", "Sureau", "Noisette", "Faînes"
     # champignons
     "Bolets", "Chanterelles", "Morilles",
 ]
@@ -248,6 +248,7 @@ colors = {
     "Poire": "lightgreen",
     "Kaki": "orange",
     "Sureau": "black",
+    "Faînes": "#A0522D"
     # champignons
     "Bolets": "#8B4513",
     "Chanterelles": "orange",
