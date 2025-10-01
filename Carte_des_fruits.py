@@ -248,8 +248,7 @@ colors = {
     "Poire": "lightgreen",
     "Kaki": "orange",
     "Sureau": "black",
-    "Faînes": "#A0522D",   # marron pour les faînes
-
+    "Faînes": "#A0522D",
     # champignons
     "Bolets": "#8B4513",
     "Chanterelles": "orange",
