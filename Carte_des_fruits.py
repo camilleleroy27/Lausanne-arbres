@@ -44,28 +44,26 @@ if not MOBILE_COMPACT:
 mobile_css = f"""
 <style>
 /* ======== 1) Gabarits généraux ======== */
-@media (max-width: 640px){{
-  .block-container {{ padding: 0.6rem 0.7rem !important; }}
-  [data-testid="stHorizontalBlock"] {{ overflow: visible !important; }}
+@media (max-width: 640px){
+  .block-container { padding: 0.6rem 0.7rem !important; }
+  [data-testid="stHorizontalBlock"] { overflow: visible !important; }
   /* Sidebar un peu plus large sur mobile, au-dessus des overlays */
-  .stSidebar {{ width: 84vw !important; z-index: 10000 !important; }}
-}}
+  .stSidebar { width: 84vw !important; z-index: 10000 !important; }
+}
 
 /* ======== 2) Appbar mobile façon Google Maps ======== */
-/* Idée : ne pas couvrir le coin haut-gauche pour laisser le bouton >> cliquable */
-@media (max-width: 640px){{
-  /* on masque le H1 streamlit seulement sur mobile, le desktop reste inchangé */
-  .block-container h1 {{ display: none; }}
+@media (max-width: 640px){
+  .block-container h1 { display: none; }
 
-  #appbar-mobile {{
+  #appbar-mobile {
     position: sticky;
     top: 0;
     margin-left: 56px;                 /* laisse la zone du bouton >> cliquable */
     max-width: calc(100% - 64px);
-    z-index: 900;                      /* sous les contrôles Streamlit (>> reste au-dessus) */
-    pointer-events: none;              /* ne bloque pas les interactions derrière */
-  }}
-  #appbar-mobile .appbar-inner {{
+    z-index: 900;
+    pointer-events: none;
+  }
+  #appbar-mobile .appbar-inner {
     display: flex;
     gap: 10px;
     align-items: center;
@@ -75,55 +73,59 @@ mobile_css = f"""
     box-shadow: 0 2px 10px rgba(0,0,0,.10);
     border-radius: 14px;
     padding: 8px 12px;
-    pointer-events: auto;              /* les éléments internes redeviennent cliquables */
-  }}
-  #appbar-mobile h1 {{
+    pointer-events: auto;
+  }
+  #appbar-mobile h1 {
     margin: 0;
     font-size: 16px;
     line-height: 1.25;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-  }}
-  #appbar-mobile .hint {{
+  }
+  #appbar-mobile .hint {
     font-size: 12.5px;
     opacity: .75;
-  }}
-}}
+  }
+}
 
 /* ======== 3) Légende plus compacte ======== */
-@media (max-width: 640px){{
-  #legend-card {{ left: 12px !important; bottom: 12px !important; }}
-  #legend-card details {{ font-size: 12px !important; max-width: 180px !important; }}
-}}
+@media (max-width: 640px){
+  #legend-card { left: 12px !important; bottom: 12px !important; }
+  #legend-card details { font-size: 12px !important; max-width: 180px !important; }
+}
 
 /* ======== 4) Contrôles touch-friendly ======== */
-@media (max-width: 640px){{
-  button, .stButton>button {{ padding: .55rem .9rem !important; font-size: 0.98rem !important; }}
-  .stSelectbox, .stTextInput, .stNumberInput {{ font-size: .98rem !important; }}
-}}
+@media (max-width: 640px){
+  button, .stButton>button { padding: .55rem .9rem !important; font-size: 0.98rem !important; }
+  .stSelectbox, .stTextInput, .stNumberInput { font-size: .98rem !important; }
+}
+
+/* ======== 5) Bouton ">>" (toggle sidebar) toujours visible sur mobile ======== */
+@media (max-width: 640px){
+  /* Place le conteneur du bouton en haut à gauche, au-dessus des overlays */
+  [data-testid="collapsedControl"]{
+    position: fixed !important;
+    top: 8px !important;
+    left: 8px !important;
+    z-index: 10001 !important;
+  }
+  /* Donne un fond/pilule au bouton pour éviter le blanc sur blanc */
+  [data-testid="collapsedControl"] button{
+    background: #f4f4f8 !important;
+    border: 1px solid rgba(0,0,0,.08) !important;
+    border-radius: 12px !important;
+    box-shadow: 0 1px 6px rgba(0,0,0,.12) !important;
+  }
+  /* Icône plus lisible */
+  [data-testid="collapsedControl"] svg{
+    stroke: #333 !important;
+    filter: drop-shadow(0 0 1px rgba(0,0,0,.25));
+  }
+}
 </style>
 """
 st.markdown(mobile_css, unsafe_allow_html=True)
-
-# Appbar mobile
-if MOBILE_COMPACT:
-    st.markdown(
-        """
-        <div id="appbar-mobile">
-          <div class="appbar-inner">
-            <h1>Carte des arbres fruitiers &amp; champignons à Lausanne</h1>
-            <div class="hint">Astuce : replie la barre latérale via ☰</div>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-# Hauteur carte adaptée
-MAP_HEIGHT = 520
-if MOBILE_COMPACT:
-    MAP_HEIGHT = 680  # plus de hauteur utile sur petit écran
 
 # ============================================================
 # 0) Mode persistant OBLIGATOIRE (Google Sheets) + garde-fou tolérant
