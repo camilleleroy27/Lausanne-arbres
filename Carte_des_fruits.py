@@ -51,7 +51,7 @@ mobile_css = """
   .stSidebar { width: 84vw !important; z-index: 10000 !important; }
 }
 
-/* ======== 2) Appbar mobile façon Google Maps ======== */
+/* ======== 2) Appbar mobile façon Google Maps (styles conservés même si non utilisé) ======== */
 @media (max-width: 640px){
   .block-container h1 { display: none; }
 
@@ -124,6 +124,10 @@ mobile_css = """
 """
 st.markdown(mobile_css, unsafe_allow_html=True)
 
+# Hauteur carte adaptée
+MAP_HEIGHT = 520
+if MOBILE_COMPACT:
+  MAP_HEIGHT = 680
 
 # ============================================================
 # 0) Mode persistant OBLIGATOIRE (Google Sheets) + garde-fou tolérant
@@ -154,20 +158,16 @@ if missing:
 # ============================================================
 # 1) Persistance (Google Sheets uniquement)
 # ============================================================
-
 def _serialize_seasons(lst):
     return "|".join(lst or [])
-
 
 def _parse_seasons(s):
     if pd.isna(s) or not str(s).strip():
         return []
     return [x.strip() for x in str(s).split("|")]
 
-
 def _now_iso():
     return datetime.utcnow().isoformat(timespec="seconds") + "Z"
-
 
 def _gsheets_open():
     import gspread
@@ -196,7 +196,6 @@ def _gsheets_open():
         ws.update("A1:G1", [["id", "name", "lat", "lon", "seasons", "is_deleted", "updated_at"]])
     return ws
 
-
 @st.cache_data(ttl=10)
 def _read_df():
     """Lit toutes les lignes depuis Google Sheets (avec cache court)."""
@@ -211,10 +210,8 @@ def _read_df():
         df["seasons"] = ""
     return df
 
-
 def _invalidate_cache():
     st.cache_data.clear()
-
 
 def _normalize_is_deleted(series: pd.Series) -> pd.Series:
     """Uniformise is_deleted en chaîne '0'/'1' robuste aux formats bizarres."""
@@ -228,7 +225,6 @@ def _normalize_is_deleted(series: pd.Series) -> pd.Series:
         .fillna("0")
     )
 
-
 def _to_float_or_none(v):
     """Parse tolérant pour lat/lon: accepte virgule décimale, espaces, etc."""
     if v is None or (isinstance(v, float) and pd.isna(v)):
@@ -239,7 +235,6 @@ def _to_float_or_none(v):
         return float(s)
     except Exception:
         return None
-
 
 def load_items():
     """Retourne les items (non supprimés) comme liste de dicts."""
@@ -271,7 +266,6 @@ def load_items():
         )
     return items
 
-
 def add_item(name: str, lat: float, lon: float, seasons: list):
     """Append d'un nouvel item (UUID) dans la feuille."""
     ws = _gsheets_open()
@@ -286,7 +280,6 @@ def add_item(name: str, lat: float, lon: float, seasons: list):
     ]
     ws.append_row(row, value_input_option="USER_ENTERED")
     _invalidate_cache()
-
 
 def soft_delete_item(item_id: str) -> bool:
     """Marque is_deleted=1 et met à jour updated_at pour l'item donné (1 seule mise à jour)."""
@@ -329,7 +322,6 @@ def soft_delete_item(item_id: str) -> bool:
 
     _invalidate_cache()
     return True
-
 
 # ============================================================
 # 2) État (session)
@@ -386,7 +378,6 @@ MUSHROOM_SET = {"Bolets", "Chanterelles", "Morilles"}
 # ============================================================
 # 4) Barre latérale — ordre : Filtres → Recherche → Ajout/Suppression → Refresh
 # ============================================================
-
 # ---------- (1) FILTRES EN PREMIER ----------
 st.sidebar.header("Filtres")
 
@@ -410,7 +401,6 @@ st.sidebar.subheader("🔎 Rechercher une adresse / rue")
 
 BBOX_SW = (46.47, 6.48)
 BBOX_NE = (46.60, 6.80)
-
 
 def geocode_address_biased(q: str, commune: str) -> Tuple[Optional[float], Optional[float], Optional[str]]:
     if not HAS_GEOPY:
@@ -440,7 +430,6 @@ def geocode_address_biased(q: str, commune: str) -> Tuple[Optional[float], Optio
             return float(loc.latitude), float(loc.longitude), loc.address
 
     return None, None, None
-
 
 COMMUNES = [
     "Auto (région Lausanne)",
@@ -609,7 +598,6 @@ PIN_SVG_TEMPLATE = """
 </svg>
 """.strip()
 
-
 def glyph_tree_white() -> str:
     return """
     <polygon points="18,8 12,13 24,13" fill="white"/>
@@ -618,24 +606,20 @@ def glyph_tree_white() -> str:
     <rect x="16.2" y="21" width="3.6" height="5.5" rx="1.2" fill="white"/>
     """.strip()
 
-
 def glyph_mushroom_white() -> str:
     return """
     <path d="M9,18 C9,13 13,10 18,10 C23,10 27,13 27,18 L9,18 Z" fill="white"/>
     <rect x="15.5" y="18" width="5" height="7" rx="2" fill="white"/>
     """.strip()
 
-
 def build_pin_svg(fill_color: str, glyph: str, w=36, h=48) -> str:
     svg = PIN_SVG_TEMPLATE.format(W=w, H=h, FILL=fill_color, GLYPH=glyph)
     return "data:image/svg+xml;charset=UTF-8," + urllib.parse.quote(svg)
-
 
 def make_custom_pin(fill_color: str, for_mushroom: bool) -> CustomIcon:
     glyph = glyph_mushroom_white() if for_mushroom else glyph_tree_white()
     url = build_pin_svg(fill_color, glyph)
     return CustomIcon(icon_image=url, icon_size=(30, 42), icon_anchor=(15, 40))
-
 
 # Markers
 def add_tree_marker(tree):
@@ -646,7 +630,6 @@ def add_tree_marker(tree):
         icon=make_custom_pin(fill, for_mushroom=False),
     ).add_to(cluster)
 
-
 def add_mushroom_marker(tree):
     fill = colors.get(tree["name"], "gray")
     folium.Marker(
@@ -654,7 +637,6 @@ def add_mushroom_marker(tree):
         popup=f"{tree['name']}",
         icon=make_custom_pin(fill, for_mushroom=True),
     ).add_to(cluster)
-
 
 for t in filtered:
     if t["name"] in MUSHROOM_SET:
@@ -671,10 +653,6 @@ if st.session_state["search_center"] is not None:
         icon=folium.Icon(color="blue", icon="search", prefix="fa"),
     ).add_to(m)
     folium.Circle(location=center, radius=35, color="blue", fill=True, fill_opacity=0.15).add_to(m)
-
-# Outils lat/lon
-folium.LatLngPopup().add_to(m)
-MousePosition(position="topright", separator=" | ", empty_string="", num_digits=6, prefix="📍").add_to(m)
 
 # Légende repliable
 def legend_pin_dataurl(name: str) -> str:
@@ -714,11 +692,11 @@ legend_html = f"""
 """
 m.get_root().html.add_child(folium.Element(legend_html))
 
-# ====== Titre flottant dans la carte (mobile uniquement), sous l'appbar ======
+# ====== Titre flottant dans la carte (mobile uniquement), EN HAUT À DROITE ======
 if MOBILE_COMPACT:
     map_title_html = """
-    <div style="position: fixed; top: 58px; left: 50%; transform: translateX(-50%); z-index: 850;">
-      <div style="background: #ffffffee; border: 1px solid rgba(0,0,0,.1); border-radius: 12px; padding: 6px 10px; box-shadow: 0 2px 8px rgba(0,0,0,.12); font-size: 13px;">
+    <div style="position: fixed; top: 58px; right: 12px; z-index: 850;">
+      <div style="background: #ffffffee; border: 1px solid rgba(0,0,0,.1); border-radius: 12px; padding: 6px 10px; box-shadow: 0 2px 8px rgba(0,0,0,.12); font-size: 13px; text-align: right;">
         🌳 Carte des arbres &amp; champignons – Lausanne
       </div>
     </div>
@@ -755,3 +733,4 @@ with st.expander("📊 Statistiques & export", expanded=not MOBILE_COMPACT):
     )
 
 st.caption(f"🌳 Points affichés : {len(filtered)} / {len(st.session_state['trees'])}")
+``
