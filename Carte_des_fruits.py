@@ -99,7 +99,6 @@ def _ensure_header(ws) -> None:
         ws.update("A1:G1", [EXPECTED_HEADER])
         return
     headers = values[0]
-    # si l'entête ne contient pas l'essentiel -> on réécrit l'entête correcte
     if not set(["id", "name", "lat", "lon"]).issubset(set(headers)):
         ws.update("A1:G1", [EXPECTED_HEADER])
 
@@ -109,7 +108,6 @@ def _read_df():
     ws = _gsheets_open()
     _ensure_header(ws)
 
-    # À ce stade l'entête est garantie OK
     rows = ws.get_all_records()
     if not rows:
         df = pd.DataFrame(columns=EXPECTED_HEADER)
@@ -129,24 +127,61 @@ def _read_df():
 def _invalidate_cache():
     st.cache_data.clear()
 
+# --- Debug minimal pour vérifier la feuille et les données (peut rester en prod) ---
+def _gsheets_title():
+    try:
+        ws = _gsheets_open()
+        return ws.title
+    except Exception:
+        return "❌ (impossible d’ouvrir)"
+
+with st.sidebar.expander("🔍 Debug (temporaire)"):
+    st.write("Onglet (worksheet) lu :", _gsheets_title())
+    try:
+        _df_dbg = _read_df()
+        st.write("Lignes lues depuis Google Sheets :", len(_df_dbg))
+        st.write(_df_dbg.head())
+    except Exception as e:
+        st.error(f"Erreur lecture DF: {e}")
+
+# ============================================================
+# 2) Chargement logique (tolérant)
+# ============================================================
 def load_items():
     """Retourne les items (non supprimés) comme liste de dicts (lat/lon robustes)."""
     df = _read_df()
-    df = df[df["is_deleted"] != "1"].copy()
+
+    # Normalise colonnes indispensables
+    for c in ["id","name","lat","lon","is_deleted","seasons"]:
+        if c not in df.columns:
+            df[c] = ""
+
+    # Garde seulement les non-supprimés
+    df = df[df["is_deleted"].astype(str) != "1"].copy()
+
     items = []
+    bad_rows = 0
     for _, row in df.iterrows():
+        name = str(row.get("name", "")).strip()
+        lat_raw = row.get("lat", "")
+        lon_raw = row.get("lon", "")
         try:
-            lat = _to_float(row["lat"])
-            lon = _to_float(row["lon"])
+            lat = _to_float(lat_raw)
+            lon = _to_float(lon_raw)
         except Exception:
-            continue  # ignore lignes invalides
+            bad_rows += 1
+            continue  # ignore ligne invalide
+
         items.append({
             "id": str(row.get("id", "")),
-            "name": row.get("name", ""),
+            "name": name,
             "lat": lat,
             "lon": lon,
             "seasons": _parse_seasons(row.get("seasons", "")),
         })
+
+    # Petit coup d’œil utile
+    st.sidebar.caption(f"✅ Points valides chargés: {len(items)}  |  ⛔️ lignes ignorées (lat/lon invalides): {bad_rows}")
     return items
 
 def add_item(name: str, lat: float, lon: float, seasons: list):
@@ -187,7 +222,7 @@ def soft_delete_item(item_id: str):
             return
 
 # ============================================================
-# 2) État (session) — toujours resynchroniser à chaque run
+# 3) État (session) — resynchronise à chaque run
 # ============================================================
 st.session_state["trees"] = load_items()
 if "search_center" not in st.session_state:
@@ -196,7 +231,7 @@ if "search_label" not in st.session_state:
     st.session_state["search_label"] = ""
 
 # ============================================================
-# 3) Catalogue & couleurs
+# 4) Catalogue & couleurs
 # ============================================================
 CATALOG = [
     "Pomme", "Poire", "Figue", "Grenade", "Kiwi", "Nèfle", "Kaki",
@@ -222,7 +257,7 @@ colors = {
 MUSHROOM_SET = {"Bolets", "Chanterelles", "Morilles"}
 
 # ============================================================
-# 4) Actions (sans bouton “réparer”)
+# 5) Actions (sans bouton “réparer”)
 # ============================================================
 st.sidebar.markdown("---")
 if st.sidebar.button("🔄 Rafraîchir les données"):
@@ -282,7 +317,7 @@ with st.sidebar.form("add_or_delete_form"):
                     st.error(f"Erreur lors de la suppression : {e}")
 
 # ============================================================
-# 5) Filtres + recherche
+# 6) Filtres + recherche
 # ============================================================
 st.sidebar.header("Filtres")
 basemap_label_to_tiles = {
@@ -357,7 +392,7 @@ if selected_seasons:
     filtered = [t for t in filtered if any(s in selected_seasons for s in t["seasons"])]
 
 # ============================================================
-# 6) Carte
+# 7) Carte
 # ============================================================
 default_center = [46.5191, 6.6336]
 if st.session_state["search_center"] is not None:
@@ -493,7 +528,7 @@ m.get_root().html.add_child(folium.Element(legend_html))
 st_folium(m, width=900, height=520)
 
 # ============================================================
-# 7) Stats & export
+# 8) Stats & export
 # ============================================================
 counts = Counter(t["name"] for t in filtered)
 total = len(filtered)
