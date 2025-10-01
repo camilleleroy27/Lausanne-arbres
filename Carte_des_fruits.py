@@ -289,8 +289,7 @@ with st.sidebar.form("add_or_delete_form"):
                 st.rerun()  # 🔁 reconstruit la carte avec les données à jour
             except Exception as e:
                 st.error(f"Erreur lors de l'ajout : {e}")
-
-   else:  # Supprimer
+else:  # Supprimer
     trees = st.session_state.get("trees", [])
     if not trees:
         st.info("Aucun point à supprimer.")
@@ -323,6 +322,7 @@ with st.sidebar.form("add_or_delete_form"):
                         st.rerun()
                 except Exception as e:
                     st.error(f"Erreur lors de la suppression : {e}")
+
 
 
 # ============================================================
