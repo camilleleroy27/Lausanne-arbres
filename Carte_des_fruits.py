@@ -21,9 +21,9 @@ except Exception:
 st.set_page_config(page_title="Arbres & champignons – Lausanne", layout="wide")
 st.title("Carte des arbres fruitiers & champignons à Lausanne")
 # --- DIAGNOSTIC TEMPORAIRE DES SECRETS ---
-st.write("secrets keys ->", list(st.secrets.keys()))
-st.write("has gsheets_spreadsheet_url ->", "gsheets_spreadsheet_url" in st.secrets)
-st.write("worksheet name ->", st.secrets.get("gsheets_worksheet_name", "<absent>"))
+st.write("secrets keys (repr) ->", [repr(k) for k in st.secrets.keys()])
+st.write("url at root? ->", "gsheets_spreadsheet_url" in st.secrets)
+st.write("url inside gcp_service_account? ->", "gcp_service_account" in st.secrets and "gsheets_spreadsheet_url" in st.secrets["gcp_service_account"])
 
 
 # ============================================================
