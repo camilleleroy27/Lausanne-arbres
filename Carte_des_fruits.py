@@ -192,6 +192,16 @@ colors = {
 }
 MUSHROOM_SET = {"Bolets", "Chanterelles", "Morilles"}
 
+# --- BOUTON DE TEST TEMPORAIRE ---
+if st.sidebar.button("🔧 Tester Google Sheets"):
+    try:
+        ws = _gsheets_open()
+        st.success(f"Feuille ouverte: '{ws.title}' ✅")
+        st.write("Entête:", ws.row_values(1))
+    except Exception as e:
+        st.error(f"Erreur Google Sheets: {e}")
+
+
 # ============================================================
 # 4) Barre latérale : filtres + recherche
 # ============================================================
