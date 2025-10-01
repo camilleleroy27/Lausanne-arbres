@@ -256,6 +256,7 @@ colors = {
 MUSHROOM_SET = {"Bolets", "Chanterelles", "Morilles"}
 
 # ============================================================
+# ============================================================
 # 4) Actions & outils (placés AVANT filtrage + carte)
 # ============================================================
 st.sidebar.markdown("---")
@@ -267,9 +268,14 @@ if st.sidebar.button("🔄 Rafraîchir les données"):
 st.sidebar.subheader("➕/➖ Ajouter ou supprimer un point")
 mode = st.sidebar.radio("Choisir mode", ["Ajouter", "Supprimer"], index=0, horizontal=True, label_visibility="collapsed")
 
-with st.sidebar.form("add_or_delete_form"):
-    if mode == "Ajouter":
-        new_name = st.selectbox("Catégorie", options=sorted(set(CATALOG + [t["name"] for t in st.session_state["trees"]])), index=0)
+# ---------- Mode AJOUTER (formulaire dédié) ----------
+if mode == "Ajouter":
+    with st.sidebar.form("add_form"):
+        new_name = st.selectbox(
+            "Catégorie",
+            options=sorted(set(CATALOG + [t["name"] for t in st.session_state["trees"]])),
+            index=0
+        )
         col_a, col_b = st.columns(2)
         with col_a:
             new_lat = st.number_input("Latitude", value=46.519100, format="%.6f")
@@ -286,20 +292,25 @@ with st.sidebar.form("add_or_delete_form"):
                     colors[new_name] = "green"
                 st.session_state["trees"] = load_items()
                 st.success(f"Ajouté : {new_name} ✅ (persisté)")
-                st.rerun()  # 🔁 reconstruit la carte avec les données à jour
+                st.rerun()  # 🔁 reconstruit la carte
             except Exception as e:
                 st.error(f"Erreur lors de l'ajout : {e}")
-else:  # Supprimer
+
+# ---------- Mode SUPPRIMER (case à cocher hors form + form dédié) ----------
+else:
     trees = st.session_state.get("trees", [])
     if not trees:
         st.info("Aucun point à supprimer.")
-        st.sidebar.form("delete_form").form_submit_button("Supprimer définitivement", disabled=True)  # bouton inactif si aucun
     else:
+        # Liste des points
         options_labels, idx_to_id = [], {}
         for i, t in enumerate(trees):
             seasons_txt = _serialize_seasons(t.get("seasons", [])) or "—"
             options_labels.append(f"{i+1}. {t['name']} – {t['lat']:.5f}, {t['lon']:.5f} [{seasons_txt}]")
             idx_to_id[i] = t["id"]
+
+        # ✅ La checkbox est HORS du form pour déclencher un rerun à chaque clic
+        confirm = st.sidebar.checkbox("Je confirme la suppression", value=False, key="confirm_delete")
 
         with st.sidebar.form("delete_form"):
             idx_choice = st.selectbox(
@@ -307,8 +318,7 @@ else:  # Supprimer
                 options=list(idx_to_id.keys()),
                 format_func=lambda i: options_labels[i]
             )
-            confirm = st.checkbox("Je confirme la suppression", value=False)
-            submitted_del = st.form_submit_button("Supprimer définitivement")
+            submitted_del = st.form_submit_button("Supprimer définitivement", disabled=not st.session_state["confirm_delete"])
 
         if submitted_del:
             if not confirm:
