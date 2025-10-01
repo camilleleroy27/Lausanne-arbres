@@ -102,7 +102,6 @@ mobile_css = """
 }
 
 /* ======== 5) Bouton ">>" (toggle sidebar) toujours visible sur mobile ======== */
-/* Bouton ">>" toujours visible sur mobile, même quand la sidebar est ouverte */
 @media (max-width: 640px){
   [data-testid="collapsedControl"]{
     position: fixed !important;
